@@ -52,6 +52,15 @@ python evals/run_evals.py --local
 
 评测集在 `evals/repos.yaml`，可随意增删。注意：GitHub 部分仓库在国内网络下可能无法访问，换一个可访问的仓库或镜像即可。
 
+### AI 报告评测（Phase 2）
+
+```bash
+# 对指定仓库生成 AI 概览并自动校验引用（需要配置 DeepSeek API Key）
+python evals/run_ai_evals.py --filter flask,requests --save evals/.cache/ai_reports
+```
+
+指标：幻觉率（引用指向不存在的文件，验收 0%）、引用精确率（歧义引用只警告不计幻觉）、章节覆盖。报告原文保存后可人工抽查。
+
 ## 项目结构
 
 ```

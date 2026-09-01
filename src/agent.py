@@ -4,6 +4,7 @@
 - 自己实现 ReAct 式循环：模型决定调用哪个工具 → 执行 → 结果回传 → 直到模型给出最终回答
 - 确定性工具负责"读代码"，LLM 只负责"总结与推理"，降低幻觉
 - 每次工具调用都被记录，供界面展示"Agent 做了什么"
+- 接近轮数上限时注入系统提醒，强制模型收尾，避免死循环
 """
 
 from __future__ import annotations
@@ -17,7 +18,8 @@ from .config import LLMConfig
 from .prompts import SYSTEM_PROMPT, OVERVIEW_PROMPT, DEEP_DIVE_PROMPT
 from .tools import call_tool, get_tool_schemas
 
-MAX_TOOL_ROUNDS = 15
+MAX_TOOL_ROUNDS = 35
+URGE_ROUNDS_LEFT = 4  # 剩余轮数低于该值时提醒模型收尾
 
 
 class CodebaseNavigator:
@@ -40,8 +42,9 @@ class CodebaseNavigator:
         self.conversation.append({"role": "user", "content": user_message})
         messages = [self._system_message(), *self.conversation]
         self.last_tool_calls = []
+        urged = False
 
-        for _ in range(self.max_tool_rounds):
+        for round_index in range(self.max_tool_rounds):
             response = self.client.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
@@ -50,6 +53,13 @@ class CodebaseNavigator:
             )
             message = response.choices[0].message
             if message.tool_calls:
+                # 接近上限时提醒模型直接收尾
+                if self.max_tool_rounds - round_index <= URGE_ROUNDS_LEFT and not urged:
+                    urged = True
+                    messages.append({
+                        "role": "system",
+                        "content": "你已经收集了足够的信息。请立即停止调用工具，基于已有信息输出最终回答。",
+                    })
                 messages.append(message)  # AI 消息（含工具调用）回传给模型
                 for tc in message.tool_calls:
                     name = tc.function.name
