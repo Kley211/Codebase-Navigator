@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.report import generate_report
 from src.tools import call_tool
-from src.context import build_overview_context
+from src.context import build_overview_context, _is_large, _module_layout
 
 
 def make_fake_repo() -> Path:
@@ -39,8 +39,22 @@ def make_fake_repo() -> Path:
     return tmp
 
 
+def make_large_fake_repo() -> Path:
+    """构造超过大仓库阈值（300 源码文件）的分层仓库。"""
+    tmp = Path(tempfile.mkdtemp(prefix="nav-large-"))
+    (tmp / "README.md").write_text("# Large Demo\n", encoding="utf-8")
+    for module in ("core", "api", "worker", "cli"):
+        for i in range(80):
+            (tmp / module).mkdir(parents=True, exist_ok=True)
+            (tmp / module / f"mod_{module}_{i:03d}.py").write_text(
+                f"def fn{i}():\n    return {i}\n", encoding="utf-8"
+            )
+    return tmp
+
+
 def main() -> int:
     repo = make_fake_repo()
+    large_repo = make_large_fake_repo()
     checks = [
         ("目录结构", call_tool("list_directory_structure", {"repo_path": str(repo)})),
         ("入口点", call_tool("find_entry_points", {"repo_path": str(repo)})),
@@ -70,6 +84,23 @@ def main() -> int:
     for expected in ("目录结构", "依赖", "入口点", "### 文件：app.py", "src/core.py"):
         if expected not in context:
             print(f"[❌] AI 上下文缺少关键内容：{expected}")
+            failed += 1
+
+    if _is_large(repo):
+        print("[❌] 小仓库不应被判定为大仓库")
+        failed += 1
+    if not _is_large(large_repo):
+        print("[❌] 大仓库应被判定为大仓库")
+        failed += 1
+
+    modules = [name for name, _ in _module_layout(large_repo)]
+    if "core" not in modules or "api" not in modules:
+        print(f"[❌] 大仓库模块识别缺失：{modules}")
+        failed += 1
+    large_context = build_overview_context(str(large_repo))
+    for expected in ("## 模块：core/", "## 模块：api/", "### 文件：core/"):
+        if expected not in large_context:
+            print(f"[❌] 大仓库分层上下文缺少：{expected}")
             failed += 1
 
     if failed == 0:
