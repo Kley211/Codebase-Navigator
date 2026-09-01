@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.report import generate_report
 from src.tools import call_tool
+from src.context import build_overview_context
 
 
 def make_fake_repo() -> Path:
@@ -63,6 +64,12 @@ def main() -> int:
     for expected in ("项目学习报告", "app.py", "flask", "学习路线"):
         if expected not in report:
             print(f"[❌] 报告缺少关键内容：{expected}")
+            failed += 1
+
+    context = build_overview_context(str(repo))
+    for expected in ("目录结构", "依赖", "入口点", "### 文件：app.py", "src/core.py"):
+        if expected not in context:
+            print(f"[❌] AI 上下文缺少关键内容：{expected}")
             failed += 1
 
     if failed == 0:

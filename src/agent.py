@@ -4,22 +4,40 @@
 - 自己实现 ReAct 式循环：模型决定调用哪个工具 → 执行 → 结果回传 → 直到模型给出最终回答
 - 确定性工具负责"读代码"，LLM 只负责"总结与推理"，降低幻觉
 - 每次工具调用都被记录，供界面展示"Agent 做了什么"
-- 接近轮数上限时注入系统提醒，强制模型收尾，避免死循环
+- 三重收尾保障：工具预算上限强制无工具收尾、接近上限时提醒、最终回答质量校验（不合格要求重答）
+- 检测模型用文本模拟工具调用（不解析脆弱的伪 XML），提醒后仍不改正则强制收尾
 """
 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from openai import OpenAI
 
 from .config import LLMConfig
-from .prompts import SYSTEM_PROMPT, OVERVIEW_PROMPT, DEEP_DIVE_PROMPT
+from .context import build_overview_context
+from .prompts import SINGLE_SHOT_PROMPT, SYSTEM_PROMPT, OVERVIEW_PROMPT, DEEP_DIVE_PROMPT
 from .tools import call_tool, get_tool_schemas
 
-MAX_TOOL_ROUNDS = 35
-URGE_ROUNDS_LEFT = 4  # 剩余轮数低于该值时提醒模型收尾
+MAX_TOOL_ROUNDS = 35        # 最大 API 往返轮数
+MAX_TOOL_CALLS = 30         # 最大工具调用次数（耗尽后强制无工具收尾）
+URGE_ROUNDS_LEFT = 4        # 剩余轮数低于该值时提醒模型收尾
+MAX_FINAL_RETRIES = 2       # 最终回答不合格时允许重试次数
+
+# 用于校验最终回答是否"像正式回答"（含标题结构与 文件:行号 引用）
+_CITE_RE = re.compile(r"[\w./\\-]+\.\w+:\d+")
+_HEADING_RE = re.compile(r"^#{1,6}\s", re.M)
+
+# 模型用文本模拟工具调用的特征标记（格式五花八门，检测到即处理）
+_FAKE_MARKER_RE = re.compile(r"tool_calls|invoke name=|parameter name=|\uff5c")
+
+
+def _overview_final_check(content: str) -> bool:
+    """AI 概览的最终回答校验：长度充足、有 Markdown 标题、有 file:line 引用。"""
+    text = content.strip()
+    return len(text) >= 200 and bool(_HEADING_RE.search(text)) and bool(_CITE_RE.search(text))
 
 
 class CodebaseNavigator:
@@ -38,13 +56,31 @@ class CodebaseNavigator:
     def _system_message(self) -> dict:
         return {"role": "system", "content": SYSTEM_PROMPT.format(repo_path=self.repo_path)}
 
-    def _run(self, user_message: str) -> str:
+    def _run(self, user_message: str, final_check=None) -> str:
+        """执行一轮 Agent 循环。final_check 用于校验最终回答质量。"""
         self.conversation.append({"role": "user", "content": user_message})
         messages = [self._system_message(), *self.conversation]
         self.last_tool_calls = []
         urged = False
+        forced_final = False
+        retries = 0
+        text_tool_nudged = False
 
         for round_index in range(self.max_tool_rounds):
+            # 工具预算耗尽：去掉 tools，强制模型基于已有信息收尾
+            if len(self.last_tool_calls) >= MAX_TOOL_CALLS and not forced_final:
+                forced_final = True
+                messages.append({
+                    "role": "system",
+                    "content": "工具调用次数已达上限。请基于已收集的信息立即输出最终回答，不要再调用工具。",
+                })
+                response = self.client.chat.completions.create(
+                    model=self.config.model, messages=messages, temperature=0
+                )
+                content = response.choices[0].message.content or "（模型未返回内容）"
+                self.conversation.append({"role": "assistant", "content": content})
+                return content
+
             response = self.client.chat.completions.create(
                 model=self.config.model,
                 messages=messages,
@@ -53,7 +89,7 @@ class CodebaseNavigator:
             )
             message = response.choices[0].message
             if message.tool_calls:
-                # 接近上限时提醒模型直接收尾
+                # 接近轮数上限时提醒模型直接收尾
                 if self.max_tool_rounds - round_index <= URGE_ROUNDS_LEFT and not urged:
                     urged = True
                     messages.append({
@@ -75,14 +111,74 @@ class CodebaseNavigator:
                 continue
 
             content = message.content or "（模型未返回内容）"
+
+            # 检测到文本模拟工具调用：第一次提醒，第二次强制收尾
+            if _FAKE_MARKER_RE.search(content):
+                messages.append(message)
+                if not text_tool_nudged:
+                    text_tool_nudged = True
+                    messages.append({
+                        "role": "system",
+                        "content": "检测到你用文本形式模拟了工具调用。请改用 tools API 正式发起工具调用；若信息已足够，直接输出最终回答，不要再输出任何 XML 或标签。",
+                    })
+                    continue
+                forced_final = True
+                messages.append({
+                    "role": "system",
+                    "content": "请直接输出最终回答，不要再输出任何工具调用标签。",
+                })
+                response = self.client.chat.completions.create(
+                    model=self.config.model, messages=messages, temperature=0
+                )
+                content = response.choices[0].message.content or "（模型未返回内容）"
+                self.conversation.append({"role": "assistant", "content": content})
+                return content
+
+            # 最终回答质量校验：不合格则要求重答
+            if final_check is not None and not final_check(content) and retries < MAX_FINAL_RETRIES:
+                retries += 1
+                messages.append(message)
+                messages.append({
+                    "role": "system",
+                    "content": "你刚才的输出不是正式回答（缺少报告结构或 file:line 引用）。请立即基于已有信息输出完整的最终回答，禁止描述思考过程。",
+                })
+                continue
+
             self.conversation.append({"role": "assistant", "content": content})
             return content
 
         return "已达到最大工具调用轮数，问题较复杂，请拆分后重试。"
 
     def get_overview(self) -> str:
-        """生成代码库学习概览。"""
-        return self._run(OVERVIEW_PROMPT)
+        """生成代码库学习概览（单次生成：静态上下文 + 一次 LLM 调用）。
+
+        大仓库下多轮 ReAct 容易让模型把工具调用输出成文本导致死循环，
+        因此概览改为由确定性静态分析提供上下文、LLM 只做一次总结。
+        """
+        context = build_overview_context(self.repo_path)
+        prompt = SINGLE_SHOT_PROMPT.format(repo_name=Path(self.repo_path).name, context=context)
+        self.last_tool_calls = []
+        self.conversation.append({"role": "user", "content": prompt})
+        messages = [
+            {"role": "system", "content": "你是代码库学习助手。直接输出最终报告，不要输出思考过程。"},
+            *self.conversation,
+        ]
+
+        for _ in range(1 + MAX_FINAL_RETRIES):
+            response = self.client.chat.completions.create(
+                model=self.config.model, messages=messages, temperature=0, max_tokens=8192
+            )
+            content = response.choices[0].message.content or "（模型未返回内容）"
+            if _overview_final_check(content):
+                self.conversation.append({"role": "assistant", "content": content})
+                return content
+            messages.append({
+                "role": "system",
+                "content": "你刚才的输出不合格：缺少 `路径:行号` 形式的引用。请保持内容不变，为每个关键结论补充引用，行号只能从「核心文件」的编号行中选取。示例：`crates/uv/src/lib.rs:42`。整份报告必须包含至少 12 处 `路径:行号` 引用，否则仍不合格。直接输出重写后的完整报告，禁止输出思考过程。",
+            })
+
+        self.conversation.append({"role": "assistant", "content": content})
+        return content
 
     def ask(self, question: str) -> str:
         """针对代码库提问。"""
