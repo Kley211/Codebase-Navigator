@@ -1,0 +1,46 @@
+# Codebase Navigator 评测集
+# 来源：GitHub Trending / 热点热门项目（覆盖多语言、多规模）
+# 提示：若某仓库在当前网络下克隆失败（GitHub 部分仓库会被限制访问），
+#       请替换为可访问的仓库或用镜像地址，例如 https://github.com.cnpmjs.org/ 前缀。
+# 编辑后重新运行：python evals/run_evals.py
+repos:
+  - url: https://github.com/pallets/flask
+    name: flask
+    language: python
+    size: small
+  - url: https://github.com/psf/requests
+    name: requests
+    language: python
+    size: medium
+  - url: https://github.com/Aider-AI/aider
+    name: aider
+    language: python
+    size: medium
+  - url: https://github.com/gradio-app/gradio
+    name: gradio
+    language: python
+    size: large
+  - url: https://github.com/gin-gonic/gin
+    name: gin
+    language: go
+    size: small
+  - url: https://github.com/ollama/ollama
+    name: ollama
+    language: go
+    size: medium
+  - url: https://github.com/astral-sh/uv
+    name: uv
+    language: rust
+    size: medium
+  - url: https://github.com/rustdesk/rustdesk
+    name: rustdesk
+    language: rust
+    size: large
+  - url: https://github.com/vitejs/vite
+    name: vite
+    language: typescript
+    size: large
+  - url: https://github.com/facebook/react
+    name: react
+    language: typescript
+    size: large
