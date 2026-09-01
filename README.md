@@ -37,6 +37,16 @@ python cli.py https://github.com/psf/requests --report --output report.md
 
 也支持本地路径：`python cli.py E:\some\repo --report`。
 
+## Web 界面（Phase 3）
+
+```bash
+pip install -r requirements-web.txt
+python app.py
+# 打开 http://127.0.0.1:7860
+```
+
+单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
+
 ## 评测
 
 ```bash
@@ -64,6 +74,7 @@ python evals/run_ai_evals.py --filter flask,requests --save evals/.cache/ai_repo
 ## 项目结构
 
 ```
+├── app.py                  # Gradio Web 单页界面
 ├── cli.py                 # 命令行入口
 ├── src/
 │   ├── repo.py            # 仓库加载（URL 克隆 / 本地路径）
