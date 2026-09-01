@@ -47,6 +47,33 @@ python app.py
 
 单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
 
+## MCP Server（供 Codex / Claude / Cursor 调用）
+
+把代码库分析能力暴露为 MCP 工具，AI 编程助手可以直接调用：
+
+```bash
+pip install -r requirements.txt   # 包含 mcp>=2.0.0
+python mcp_server.py
+```
+
+在客户端（如 Codex / Claude Desktop）的 MCP 配置中加入：
+
+```json
+{
+  "mcpServers": {
+    "codebase-navigator": {
+      "command": "python",
+      "args": ["E:/study/Codebase Navigator/mcp_server.py"]
+    }
+  }
+}
+```
+
+暴露的工具：
+- 静态分析：`list_directory_structure` / `read_file` / `search_code` / `find_files_by_pattern` / `get_imports` / `find_entry_points` / `analyze_dependencies` / `get_function_signatures`
+- 报告：`generate_static_report`（免费）、`generate_ai_overview`（带 `file:line` 引用，需 API Key）
+- 仓库加载：`load_repo`（GitHub URL 自动浅克隆到本地缓存）
+
 ## 评测
 
 ```bash
