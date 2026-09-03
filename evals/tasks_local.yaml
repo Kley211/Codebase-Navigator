@@ -1,0 +1,21 @@
+# 自评测任务集：用 Codebase Navigator 自己的仓库做 Agent 行为评测（dogfood）。
+# repo_path: self 表示评测脚本所在项目根目录（无需克隆、不受 GitHub 网络影响）。
+
+tasks:
+  - repo: codebase-navigator
+    repo_path: self
+    questions:
+      - q: 这个项目的 Agent 是如何调用工具的？从 LLM 决定到工具执行、结果回传的循环是怎样的？
+        gold_files:
+          - src/agent.py
+          - src/tools/__init__.py
+        gold_terms: [tool_calls, call_tool, get_tool_schemas]
+      - q: 带读陪练是怎么判定学习者「真懂」的？判定的输入输出分别是什么？
+        gold_files:
+          - src/tutor.py
+        gold_terms: [mastered, JUDGE_SYS, 苏格拉底]
+      - q: 静态学习报告和 AI 概览分别基于什么数据生成？入口函数在哪里？
+        gold_files:
+          - src/report.py
+          - src/context.py
+        gold_terms: [generate_report, build_overview_context]

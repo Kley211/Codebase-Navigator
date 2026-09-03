@@ -10,6 +10,7 @@
   python evals/run_agent_evals.py --filter flask,requests
   python evals/run_agent_evals.py --limit 1
   python evals/run_agent_evals.py --provider openrouter --model z-ai/glm-5.2:free --save saved/
+  python evals/run_agent_evals.py --tasks evals/tasks_local.yaml   # 用本地/本项目仓库评测，免克隆
 """
 
 from __future__ import annotations
@@ -116,6 +117,7 @@ def evaluate_task(answer: str, calls: list[dict], repo_path: Path, task: dict) -
 def main() -> int:
     parser = argparse.ArgumentParser(description="Codebase Navigator Agent 行为评测（Ask 任务）")
     parser.add_argument("--clone-dir", default=str(Path(__file__).parent / ".cache"))
+    parser.add_argument("--tasks", default=str(Path(__file__).parent / "tasks.yaml"))
     parser.add_argument("--limit", type=int, help="只评测前 N 个仓库")
     parser.add_argument("--filter", help="按仓库名过滤（逗号分隔）")
     parser.add_argument("--provider", choices=list(PROVIDERS), default="openrouter")
@@ -126,7 +128,11 @@ def main() -> int:
     here = Path(__file__).resolve().parent
     with open(here / "repos.yaml", encoding="utf-8") as f:
         repo_urls = {r["name"]: r["url"] for r in yaml.safe_load(f)["repos"]}
-    with open(here / "tasks.yaml", encoding="utf-8") as f:
+    tasks_path = Path(args.tasks)
+    if not tasks_path.exists():
+        print(f"任务文件不存在：{tasks_path}")
+        return 1
+    with open(tasks_path, encoding="utf-8") as f:
         tasks = yaml.safe_load(f)["tasks"]
     if args.filter:
         wanted = {n.strip() for n in args.filter.split(",") if n.strip()}
@@ -152,18 +158,28 @@ def main() -> int:
     total_ok = total_tasks = 0
     for item in tasks:
         name = item["repo"]
-        url = repo_urls.get(name)
-        if not url:
-            print(f"⚠ {name} 不在 evals/repos.yaml 中，跳过")
-            continue
-        dest = cache_dir / name
-        print(f"▶ {name}：加载仓库...", flush=True)
-        if not (dest.exists() and any(dest.iterdir())):
-            try:
-                clone_repo(url, dest=dest)
-            except Exception as e:
-                print(f"  ❌ 克隆失败：{e}")
+        repo_path = (item.get("repo_path") or "").strip()
+        if repo_path == "self":
+            dest = here.parent  # 用本项目自己评测（dogfood）
+        elif repo_path:
+            dest = Path(repo_path).resolve()
+            if not dest.exists():
+                print(f"⚠ {name} 的本地路径不存在：{dest}，跳过")
                 continue
+        else:
+            url = repo_urls.get(name)
+            if not url:
+                print(f"⚠ {name} 不在 evals/repos.yaml 且无 repo_path，跳过")
+                continue
+            dest = cache_dir / name
+            print(f"▶ {name}：加载仓库...", flush=True)
+            if not (dest.exists() and any(dest.iterdir())):
+                try:
+                    clone_repo(url, dest=dest)
+                except Exception as e:
+                    print(f"  ❌ 克隆失败：{e}")
+                    continue
+        print(f"▶ {name}：{dest}", flush=True)
 
         try:
             agent = CodebaseNavigator(str(dest), config)
