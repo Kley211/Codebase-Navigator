@@ -1,0 +1,328 @@
+/* Codebase Navigator · 「NIGHT RADAR 深读雷达」视觉体系
+   暗色仪器风：石墨墨绿基底 + 琥珀信号色 + 苔绿文字。
+   本文件由 app.py 注入为页面 <style>，覆盖 Gradio 默认主题。 */
+
+:root, .dark, :root.dark {
+  --cn-bg0: #0a0e0c !important;  --cn-bg1: #0e1410 !important;  --cn-bg2: #121a15 !important;  --cn-bg3: #1b2620 !important;
+  --cn-line: #223028 !important;  --cn-line2: #32463b !important;
+  --cn-ink: #efe9d8 !important;  --cn-text: #b7c2b8 !important;  --cn-mut: #7e8c82 !important;  --cn-faint: #57665d !important;
+  --cn-amber: #f2a62a !important;  --cn-amber2: #ffc05e !important;  --cn-green: #51c878 !important;  --cn-red: #ef5f6b !important;
+
+  --background-fill-primary: var(--cn-bg0) !important;
+  --background-fill-secondary: var(--cn-bg1) !important;
+  --body-background-fill: var(--cn-bg0) !important;
+  --body-text-color: var(--cn-text) !important;
+  --body-text-color-subdued: var(--cn-mut) !important;
+  --block-background-fill: var(--cn-bg1) !important;
+  --block-border-color: var(--cn-line) !important;
+  --block-info-text-color: var(--cn-mut) !important;
+  --block-label-text-color: var(--cn-mut) !important;
+  --border-color-primary: var(--cn-line) !important;
+  --border-color-accent: var(--cn-amber) !important;
+  --color-accent: var(--cn-amber) !important;
+  --color-accent-soft: rgba(242,166,42,0.1) !important;
+  --panel-background-fill: var(--cn-bg1) !important;
+  --panel-border-color: var(--cn-line) !important;
+  --link-text-color: #f2b64f !important;
+  --link-text-color-hover: #ffd08a !important;
+  --link-text-color-active: #ffd08a !important;
+  --link-text-color-visited: #c98f2f !important;
+
+  --input-background-fill: #0b100d !important;
+  --input-background-fill-focus: #0b100d !important;
+  --input-background-fill-hover: #0d130f !important;
+  --input-border-color: var(--cn-line2) !important;
+  --input-border-color-hover: #3d5247 !important;
+  --input-border-color-focus: var(--cn-amber) !important;
+  --input-placeholder-color: var(--cn-faint) !important;
+  --input-shadow: none !important;
+  --input-shadow-focus: 0 0 0 3px rgba(242,166,42,0.16) !important;
+  --input-radius: 5px !important;
+
+  --button-primary-background-fill: var(--cn-amber) !important;
+  --button-primary-background-fill-hover: #ffb645 !important;
+  --button-primary-border-color: #d99a22 !important;
+  --button-primary-border-color-hover: #f2b64f !important;
+  --button-primary-text-color: #191008 !important;
+  --button-primary-text-color-hover: #191008 !important;
+  --button-secondary-background-fill: #121a15 !important;
+  --button-secondary-background-fill-hover: #1b2620 !important;
+  --button-secondary-border-color: #2c3c32 !important;
+  --button-secondary-border-color-hover: #40564a !important;
+  --button-secondary-text-color: #c6d0c6 !important;
+  --button-secondary-text-color-hover: var(--cn-ink) !important;
+  --button-cancel-background-fill: #4a1f24 !important;
+  --button-cancel-background-fill-hover: #612a31 !important;
+  --button-cancel-border-color: #8a3040 !important;
+  --button-cancel-border-color-hover: #a03a4c !important;
+  --button-cancel-text-color: #f2b9bd !important;
+  --button-cancel-text-color-hover: #f8d2d5 !important;
+  --button-large-radius: 6px !important;
+  --button-medium-radius: 6px !important;
+  --button-small-radius: 4px !important;
+  --button-border-width: 1px !important;
+  --button-transition: transform 0.15s ease, box-shadow 0.18s ease, filter 0.15s ease !important;
+
+  --checkbox-background-color: #0b100d !important;
+  --checkbox-background-color-hover: #0d130f !important;
+  --checkbox-background-color-focus: #0b100d !important;
+  --checkbox-background-color-selected: var(--cn-green) !important;
+  --checkbox-border-color: #3a4d41 !important;
+  --checkbox-border-color-hover: #56705f !important;
+  --checkbox-border-color-focus: var(--cn-green) !important;
+  --checkbox-border-color-selected: var(--cn-green) !important;
+  --checkbox-label-text-color: var(--cn-text) !important;
+  --checkbox-label-text-color-selected: #ddf3e6 !important;
+  --checkbox-label-background-fill: var(--cn-bg1) !important;
+  --checkbox-label-background-fill-hover: var(--cn-bg3) !important;
+  --checkbox-label-background-fill-selected: rgba(81,200,120,0.07) !important;
+  --checkbox-label-border-color: var(--cn-line) !important;
+  --checkbox-label-border-color-hover: var(--cn-line2) !important;
+  --checkbox-label-border-color-selected: rgba(81,200,120,0.45) !important;
+  --checkbox-label-border-width: 1px !important;
+  --checkbox-label-padding: 7px 12px !important;
+
+  --code-background-fill: #0b100d !important;
+  --error-background-fill: #2a1216 !important;
+  --error-border-color: #8a3040 !important;
+  --error-text-color: #f4b0b8 !important;
+  --loader-color: var(--cn-amber) !important;
+  --accordion-text-color: var(--cn-text) !important;
+  --prose-header-text-weight: 700 !important;
+  --prose-text-size: 14px !important;
+  --stat-background-fill: linear-gradient(120deg, #f2a62a, #51c878) !important;
+  --shadow-drop: 0 1px 0 rgba(0,0,0,0.4) !important;
+  --shadow-drop-lg: 0 12px 32px rgba(0,0,0,0.35) !important;
+  --font: "Source Sans Pro","Microsoft YaHei UI","PingFang SC","Noto Sans CJK SC",sans-serif !important;
+  --font-mono: "IBM Plex Mono","Cascadia Mono",Consolas,"Microsoft YaHei UI",monospace !important;
+}
+/* 画布底纹 */
+html, body { background-color: var(--cn-bg0) !important; }
+body {
+  background-image:
+    radial-gradient(1200px 460px at 16% -8%, rgba(242,166,42,0.08), transparent 62%),
+    radial-gradient(900px 420px at 94% -12%, rgba(81,200,120,0.06), transparent 55%);
+  background-attachment: fixed;
+}
+.gradio-container {
+  background: transparent !important;
+  max-width: 1180px !important;
+  margin: 0 auto !important;
+  padding: 10px 26px 56px !important;
+  width: 100% !important;
+}
+.main { max-width: 1180px !important; margin: 0 auto !important; }
+@media (max-width: 760px) { .gradio-container { padding: 6px 12px 40px !important; } }
+
+/* 字体与全局 */
+body, .gradio-container { font-family: var(--font); color: var(--cn-text); -webkit-font-smoothing: antialiased; }
+code, pre, kbd, samp, textarea, input, select { font-family: var(--font-mono); }
+button { cursor: pointer; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid rgba(242,166,42,0.65); outline-offset: 2px; }
+::selection { background: rgba(242,166,42,0.32); color: #fff8ea; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #26362d; border-radius: 6px; border: 2px solid var(--cn-bg0); }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* Hero 头部 */
+.cn-hero { position: relative; padding: 20px 2px 8px; overflow: hidden; }
+.cn-hero::after {
+  content: ""; position: absolute; right: -70px; top: -110px; width: 300px; height: 300px;
+  border-radius: 50%; border: 1px solid rgba(242,166,42,0.14);
+  box-shadow: 0 0 0 30px rgba(242,166,42,0.035), 0 0 0 64px rgba(242,166,42,0.02), inset 0 0 90px rgba(81,200,120,0.04);
+  pointer-events: none;
+}
+.cn-hero::before {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(rgba(148,170,158,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(148,170,158,0.05) 1px, transparent 1px);
+  background-size: 44px 44px;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,0.8), transparent 78%);
+  mask-image: linear-gradient(180deg, rgba(0,0,0,0.8), transparent 78%);
+}
+.cn-hero > * { position: relative; z-index: 1; }
+.cn-rail {
+  display: flex; align-items: center; gap: 12px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; color: var(--cn-mut);
+  text-transform: uppercase; border-bottom: 1px dashed var(--cn-line2); padding-bottom: 12px;
+}
+.cn-mark { color: var(--cn-amber); font-size: 15px; animation: cn-blink 2.6s ease-in-out infinite; }
+@keyframes cn-blink { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+.cn-kicker { color: #ccd5cc; font-weight: 600; }
+.cn-coords { margin-left: auto; color: var(--cn-faint); }
+.cn-title {
+  font-size: clamp(34px, 5vw, 52px); line-height: 1.04; letter-spacing: -0.5px;
+  color: var(--cn-ink); font-weight: 800; margin: 26px 0 10px;
+}
+.cn-title .cn-brand-amber { color: var(--cn-amber); font-family: var(--font-mono); font-weight: 600; letter-spacing: -1px; }
+.cn-sub { font-size: 15px; color: var(--cn-text); max-width: 720px; line-height: 1.85; margin: 0; }
+.cn-sub em { color: var(--cn-amber2); font-style: normal; border-bottom: 1px dashed rgba(242,166,42,0.55); padding-bottom: 1px; }
+.cn-route { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+.cn-way {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.08em; color: var(--cn-text);
+  border: 1px solid var(--cn-line2); background: var(--cn-bg1);
+  padding: 6px 12px 6px 6px; border-radius: 5px;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
+}
+.cn-way span {
+  display: inline-grid; place-items: center; width: 22px; height: 22px;
+  background: var(--cn-amber); color: #1a1206; font-weight: 700; border-radius: 4px;
+}
+.cn-way small { color: var(--cn-mut); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; }
+.cn-arrow { color: var(--cn-faint); font-family: var(--font-mono); font-size: 13px; opacity: 0.6; }
+/* 载入控制台 */
+#console-row {
+  background: linear-gradient(180deg, rgba(242,166,42,0.045), transparent 65%), var(--cn-bg1);
+  border: 1px solid var(--cn-line2); border-radius: 8px; padding: 16px 16px 20px; margin: 8px 0 4px;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 8px 24px rgba(0,0,0,0.28);
+}
+#console-row::before {
+  content: "◈ INPUT // 粘贴 GitHub 地址或本地目录";
+  display: block; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em;
+  color: var(--cn-amber); text-transform: uppercase; margin-bottom: 14px; opacity: 0.9;
+}
+#cfg-row::before {
+  content: "◆ MODEL // 模型配置 · 留空则读取 .env";
+  display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.16em;
+  color: var(--cn-mut); text-transform: uppercase; margin: 2px 0 8px;
+}
+#load-btn { align-self: flex-end; min-width: 132px; font-weight: 700; letter-spacing: 0.04em; }
+#load-btn:hover { box-shadow: 0 6px 20px rgba(242,166,42,0.3); transform: translateY(-1px); }
+#load-btn:active, button:active { transform: translateY(0) scale(0.985); }
+#status { background: #0b0f0d; border: 1px solid var(--cn-line); border-left: 3px solid var(--cn-amber); border-radius: 4px; padding: 10px 14px; margin: 6px 0 2px; }
+#status p { margin: 0; font-family: var(--font-mono); font-size: 13px; line-height: 1.6; color: var(--cn-text); }
+
+/* Tab 导航：路标式 */
+#deck { margin-top: 12px; }
+#deck [role="tab"] {
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.12em;
+  color: var(--cn-mut) !important; background: transparent !important;
+  border: 0 !important; border-radius: 0 !important; padding: 10px 16px !important;
+  text-transform: uppercase; position: relative;
+}
+#deck [role="tab"]:hover { color: var(--cn-text) !important; }
+#deck [role="tab"].selected { color: var(--cn-amber) !important; }
+#deck [role="tab"].selected::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px;
+  background: var(--cn-amber); box-shadow: 0 -2px 10px rgba(242,166,42,0.5);
+}
+#deck .tabitem { border: 1px solid var(--cn-line); border-top: 0; border-radius: 0 8px 8px 8px; padding: 18px; }
+@media (max-width: 640px) {
+  #deck [role="tab"] { padding: 8px 10px !important; font-size: 11px; }
+  #deck .tabitem { padding: 12px; }
+}
+
+/* Markdown 阅读排版（报告正文） */
+.md.prose h1, .prose h1 { font-size: 1.72em; color: var(--cn-ink); letter-spacing: 0.01em; border-bottom: 1px solid var(--cn-line2); padding-bottom: 0.35em; margin: 1.5em 0 0.7em; }
+.md.prose h1:first-child, .prose h1:first-child { border-left: 3px solid var(--cn-amber); padding-left: 0.5em; }
+.md.prose h2, .prose h2 { font-size: 1.28em; color: #e6bd77; margin: 1.6em 0 0.5em; font-weight: 700; }
+.md.prose h3, .prose h3 { font-size: 1.08em; color: var(--cn-ink); margin: 1.3em 0 0.4em; font-weight: 700; }
+.md.prose h4, .prose h4 { color: var(--cn-text); font-weight: 700; }
+.md.prose p, .prose p { line-height: 1.8; margin: 0.7em 0; }
+.md.prose strong, .prose strong { color: var(--cn-ink); }
+.md.prose a, .prose a { color: var(--link-text-color); text-decoration: none; border-bottom: 1px dotted rgba(242,182,79,0.6); }
+.md.prose a:hover, .prose a:hover { color: var(--link-text-color-hover); }
+.md.prose ul, .md.prose ol, .prose ul, .prose ol { line-height: 1.9; padding-left: 1.4em; }
+.md.prose li::marker { color: var(--cn-amber); }
+.md.prose blockquote, .prose blockquote { border-left: 3px solid var(--cn-amber); background: rgba(242,166,42,0.05); margin: 0.9em 0; padding: 0.4em 1em; color: var(--cn-text); border-radius: 0 4px 4px 0; }
+.md.prose code, .prose code { background: #0b100d; border: 1px solid var(--cn-line2); border-radius: 4px; color: var(--cn-amber2); padding: 1px 6px; font-size: 0.88em; }
+.md.prose pre, .prose pre { background: #0b100d; border: 1px solid var(--cn-line); border-left: 3px solid var(--cn-amber); border-radius: 6px; padding: 12px 14px; overflow-x: auto; line-height: 1.6; }
+.md.prose pre code, .prose pre code { background: transparent; border: 0; padding: 0; color: #d9e2d8; }
+.md.prose table, .prose table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: 0.94em; }
+.md.prose th, .prose th { border: 1px solid var(--cn-line2); background: #141c17; color: var(--cn-ink); padding: 7px 10px; text-align: left; }
+.md.prose td, .prose td { border: 1px solid var(--cn-line); padding: 6px 10px; }
+.md.prose hr, .prose hr { border: 0; border-top: 1px dashed var(--cn-line2); margin: 1.6em 0; }
+
+/* 按钮微交互 */
+button { letter-spacing: 0.02em; }
+button:hover { filter: brightness(1.05); }
+/* 进度勾选 */
+#progress-group label { font-size: 14px; border-radius: 6px; padding: 6px 2px; transition: background 0.15s ease; }
+#progress-group input[type="checkbox"] { accent-color: var(--cn-green); }
+#progress-status { margin-top: 10px; }
+#progress-status p { font-family: var(--font-mono); font-size: 13px; color: var(--cn-text); }
+#progress-status code { background: transparent; border: 0; color: var(--cn-amber2); font-weight: 600; }
+
+/* 底部示例 */
+.cn-footer { margin-top: 34px; padding-top: 20px; border-top: 1px dashed var(--cn-line2); }
+.cn-foot-head { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cn-amber); margin-bottom: 14px; }
+.cn-foot-head span:last-child { color: var(--cn-mut); }
+.cn-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+.cn-chip { font-size: 13px; color: var(--cn-text); border: 1px solid var(--cn-line); background: var(--cn-bg1); border-radius: 999px; padding: 5px 13px; transition: border-color 0.15s ease, color 0.15s ease; }
+.cn-chip:hover { border-color: var(--cn-amber); color: var(--cn-amber2); }
+.cn-note { font-size: 12.5px; color: var(--cn-faint); line-height: 1.8; max-width: 860px; }
+.cn-note b, .cn-note code { color: var(--cn-mut); font-family: var(--font-mono); font-weight: 600; }
+
+/* 载入动画 */
+@keyframes cn-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.cn-hero .cn-rail, .cn-hero .cn-title, .cn-hero .cn-sub, .cn-hero .cn-route,
+#console-row, #cfg-row, #deck { animation: cn-rise 0.65s cubic-bezier(0.2,0.7,0.2,1) both; }
+.cn-hero .cn-rail { animation-delay: 0.02s; }
+.cn-hero .cn-title { animation-delay: 0.09s; }
+.cn-hero .cn-sub { animation-delay: 0.16s; }
+.cn-hero .cn-route { animation-delay: 0.23s; }
+#console-row { animation-delay: 0.3s; }
+#cfg-row { animation-delay: 0.36s; }
+#deck { animation-delay: 0.42s; }
+@media (prefers-reduced-motion: reduce) {
+  .cn-hero .cn-rail, .cn-hero .cn-title, .cn-hero .cn-sub, .cn-hero .cn-route,
+  #console-row, #cfg-row, #deck { animation: none; }
+}
+
+/* ---------- 12. 设计关键覆盖（对抗 .prose 包裹器） ---------- */
+.prose .cn-hero .cn-title, .cn-hero .cn-title {
+  color: var(--cn-ink) !important;
+  font-size: clamp(34px, 5vw, 52px) !important;
+  line-height: 1.04 !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.5px !important;
+  margin: 26px 0 10px !important;
+  font-family: var(--font) !important;
+  border: 0 !important;
+  padding: 0 !important;
+}
+.prose .cn-title .cn-brand-amber {
+  color: var(--cn-amber) !important;
+  font-family: var(--font-mono) !important;
+  font-weight: 600 !important;
+  letter-spacing: -1px !important;
+}
+.prose .cn-hero .cn-sub, .cn-hero .cn-sub {
+  color: var(--cn-text) !important;
+  font-size: 15px !important;
+  line-height: 1.85 !important;
+  margin: 0 !important;
+  max-width: 720px !important;
+  font-family: var(--font) !important;
+}
+.prose .cn-sub em, .cn-sub em { color: var(--cn-amber2) !important; }
+.prose .cn-rail, .cn-rail {
+  color: var(--cn-mut) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  letter-spacing: 0.16em !important;
+}
+.prose .cn-kicker, .cn-kicker { color: #ccd5cc !important; font-weight: 600 !important; }
+.prose .cn-coords, .cn-coords { color: var(--cn-faint) !important; }
+.prose .cn-mark, .cn-mark { color: var(--cn-amber) !important; }
+.prose .cn-way, .cn-way {
+  color: var(--cn-text) !important;
+  font-family: var(--font-mono) !important;
+}
+.prose .cn-way span, .cn-way span { color: #1a1206 !important; }
+.prose .cn-way small, .cn-way small { color: var(--cn-mut) !important; }
+.prose .cn-arrow, .cn-arrow { color: var(--cn-faint) !important; }
+.prose .cn-footer, .cn-footer { color: var(--cn-text) !important; }
+.prose .cn-foot-head, .cn-foot-head { color: var(--cn-amber) !important; }
+.prose .cn-foot-head span:last-child { color: var(--cn-mut) !important; }
+.prose .cn-chip, .cn-chip {
+  color: var(--cn-text) !important;
+  background: var(--cn-bg1) !important;
+  border-color: var(--cn-line) !important;
+}
+.prose .cn-chip:hover, .cn-chip:hover {
+  color: var(--cn-amber2) !important;
+  border-color: var(--cn-amber) !important;
+}
+.prose .cn-note, .cn-note { color: var(--cn-faint) !important; }
+.prose .cn-note code, .cn-note code { color: var(--cn-mut) !important; }
