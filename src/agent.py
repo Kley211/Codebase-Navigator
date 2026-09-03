@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
-from openai import OpenAI
+from openai import APIError, APIConnectionError, APITimeoutError, OpenAI, RateLimitError
 
 from .config import LLMConfig
 from .context import build_overview_context
@@ -32,6 +33,19 @@ _HEADING_RE = re.compile(r"^#{1,6}\s", re.M)
 
 # 模型用文本模拟工具调用的特征标记（格式五花八门，检测到即处理）
 _FAKE_MARKER_RE = re.compile(r"tool_calls|invoke name=|parameter name=|\uff5c")
+
+# 免费模型（如 OpenRouter 共享池）偶发限流/过载：指数退避重试
+_RETRY_DELAYS = (5, 10, 20, 40, 60)
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """判断异常是否值得重试（限流/连接/服务器过载）。"""
+    if isinstance(exc, (RateLimitError, APIConnectionError, APITimeoutError)):
+        return True
+    if isinstance(exc, APIError):
+        return getattr(exc, "status_code", None) in _RETRYABLE_STATUS
+    return False
 
 
 def _overview_final_check(content: str) -> bool:
@@ -52,6 +66,18 @@ class CodebaseNavigator:
         self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
         self.conversation: list[dict] = []
         self.last_tool_calls: list[dict] = []
+
+    def _complete(self, messages: list[dict], **kwargs):
+        """带指数退避重试的补全调用：免费模型共享池偶发 429/5xx 时自动重试。"""
+        for delay in _RETRY_DELAYS + (0,):
+            try:
+                return self.client.chat.completions.create(
+                    model=self.config.model, messages=messages, **kwargs
+                )
+            except Exception as exc:
+                if not _is_retryable(exc) or not delay:
+                    raise
+                time.sleep(delay)
 
     def _system_message(self) -> dict:
         return {"role": "system", "content": SYSTEM_PROMPT.format(repo_path=self.repo_path)}
@@ -74,19 +100,12 @@ class CodebaseNavigator:
                     "role": "system",
                     "content": "工具调用次数已达上限。请基于已收集的信息立即输出最终回答，不要再调用工具。",
                 })
-                response = self.client.chat.completions.create(
-                    model=self.config.model, messages=messages, temperature=0
-                )
+                response = self._complete(messages, temperature=0)
                 content = response.choices[0].message.content or "（模型未返回内容）"
                 self.conversation.append({"role": "assistant", "content": content})
                 return content
 
-            response = self.client.chat.completions.create(
-                model=self.config.model,
-                messages=messages,
-                tools=get_tool_schemas(),
-                temperature=0,
-            )
+            response = self._complete(messages, tools=get_tool_schemas(), temperature=0)
             message = response.choices[0].message
             if message.tool_calls:
                 # 接近轮数上限时提醒模型直接收尾
@@ -127,9 +146,7 @@ class CodebaseNavigator:
                     "role": "system",
                     "content": "请直接输出最终回答，不要再输出任何工具调用标签。",
                 })
-                response = self.client.chat.completions.create(
-                    model=self.config.model, messages=messages, temperature=0
-                )
+                response = self._complete(messages, temperature=0)
                 content = response.choices[0].message.content or "（模型未返回内容）"
                 self.conversation.append({"role": "assistant", "content": content})
                 return content
@@ -165,9 +182,7 @@ class CodebaseNavigator:
         ]
 
         for _ in range(1 + MAX_FINAL_RETRIES):
-            response = self.client.chat.completions.create(
-                model=self.config.model, messages=messages, temperature=0, max_tokens=8192
-            )
+            response = self._complete(messages, temperature=0, max_tokens=8192)
             content = response.choices[0].message.content or "（模型未返回内容）"
             if _overview_final_check(content):
                 self.conversation.append({"role": "assistant", "content": content})
