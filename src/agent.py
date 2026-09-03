@@ -62,6 +62,14 @@ def _overview_final_check(content: str) -> bool:
     return len(text) >= 200 and bool(_HEADING_RE.search(text)) and bool(_CITE_RE.search(text))
 
 
+def _ask_final_check(content: str) -> bool:
+    """Ask 问答的最终回答校验：有实质内容，且至少 2 条不重复的 file:line 引用。"""
+    text = (content or "").strip()
+    if len(text) < 80:
+        return False
+    return len(set(_CITE_RE.findall(text))) >= 2
+
+
 class CodebaseNavigator:
     """面向单个仓库的学习 Agent。"""
 
@@ -130,6 +138,16 @@ class CodebaseNavigator:
                 })
                 response = self._complete(messages, temperature=0)
                 content = response.choices[0].message.content or "（模型未返回内容）"
+                if final_check is not None and not final_check(content):
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({
+                        "role": "system",
+                        "content": "你刚才的最终回答缺少足够的 `路径:行号` 引用。"
+                        "请基于已收集的信息重写最终回答：每条结论都要带真实 `路径:行号` 引用，"
+                        "禁止再调用工具。直接输出重写后的回答。",
+                    })
+                    response = self._complete(messages, temperature=0)
+                    content = response.choices[0].message.content or "（模型未返回内容）"
                 self.conversation.append({"role": "assistant", "content": content})
                 return content
 
@@ -302,7 +320,7 @@ class CodebaseNavigator:
 
     def chat(self, message: str) -> str:
         """自由对话。"""
-        return self._run(message)
+        return self._run(message, final_check=_ask_final_check)
 
     def reset_conversation(self) -> None:
         self.conversation = []
