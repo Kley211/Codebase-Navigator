@@ -6,7 +6,7 @@
 
 - **静态分析引擎（无需 API Key）**：目录结构、入口点、依赖、imports、文件热度，秒级输出
 - **AI 学习报告**：Overview / 模块地图 / Key Files / Roadmap，每条结论带 `file:line` 引用（反幻觉）
-- **多模型支持**：DeepSeek（国内直连）/ OpenRouter / Groq / OpenAI / 任意 OpenAI 兼容服务
+- **默认免费模型**：OpenRouter 的 `z-ai/glm-5.2:free`（0 费用），也可切回 DeepSeek / Groq / OpenAI / 任意 OpenAI 兼容服务
 - **CLI 优先**：一份 Markdown 报告即交付物，方便导出、分享、写进简历
 - **评测驱动**：内置 10 个 GitHub Trending 热门仓库评测集，质量可量化
 
@@ -20,7 +20,7 @@ source .venv/bin/activate       # macOS / Linux
 pip install -r requirements.txt
 
 # 2. 配置 API Key（可选，静态报告不需要）
-cp .env.example .env            # 填入 DEEPSEEK_API_KEY 等
+cp .env.example .env            # 填 OPENROUTER_API_KEY（默认免费模型 glm-5.2:free），DeepSeek 可选
 
 # 3. 生成静态学习报告（免费，无需 Key）
 python cli.py https://github.com/psf/requests --report
@@ -92,7 +92,7 @@ python evals/run_evals.py --local
 ### AI 报告评测（Phase 2）
 
 ```bash
-# 对指定仓库生成 AI 概览并自动校验引用（需要配置 DeepSeek API Key）
+# 对指定仓库生成 AI 概览并自动校验引用（默认 OpenRouter 免费模型 z-ai/glm-5.2:free）
 python evals/run_ai_evals.py --filter flask,requests --save evals/.cache/ai_reports
 ```
 

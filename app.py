@@ -6,7 +6,7 @@
 
 页面：
 - 静态报告：无需 API Key，秒出
-- AI 概览：需要 API Key（默认读 .env 的 DEEPSEEK_API_KEY）
+- AI 概览：需要 API Key（默认读 .env 的 OPENROUTER_API_KEY，免费模型 z-ai/glm-5.2:free）
 - 问答：边读报告边追问，答案带 file:line 引用
 """
 
@@ -34,7 +34,7 @@ state = {"repo_path": None, "agent": None}
 # 常用模型快捷选项
 MODEL_OPTIONS = {
     "deepseek": ["deepseek-chat", "deepseek-reasoner"],
-    "openrouter": ["xiaomi/mimo-v2-flash:free", "google/gemma-3-4b-it:free"],
+    "openrouter": ["z-ai/glm-5.2:free", "z-ai/glm-5.2", "z-ai/glm-4.7"],
     "groq": ["llama-3.1-8b-instant"],
     "openai": ["gpt-4o-mini", "gpt-4o"],
 }
@@ -133,12 +133,12 @@ def build_app() -> gr.Blocks:
 
         with gr.Row():
             provider = gr.Dropdown(
-                choices=list(PROVIDERS), value="deepseek", label="LLM 提供商"
+                choices=list(PROVIDERS), value="openrouter", label="LLM 提供商"
             )
             model = gr.Textbox(
-                value="deepseek-chat",
+                value="z-ai/glm-5.2:free",
                 label="模型（留空用默认）",
-                placeholder="deepseek-chat",
+                placeholder="z-ai/glm-5.2:free",
             )
             api_key = gr.Textbox(
                 label="API Key（留空用 .env）",
@@ -178,7 +178,7 @@ def build_app() -> gr.Blocks:
             - 认证 / 数据库 / API 路由分别在哪里实现？
             - 我应该按什么顺序读源码？
 
-            **注意**：AI 功能需要 API Key（默认读取 `.env` 的 `DEEPSEEK_API_KEY`，也可在页面上临时填写）。
+            **注意**：AI 功能需要 API Key（默认读取 `.env` 的 `OPENROUTER_API_KEY`，使用免费模型 `z-ai/glm-5.2:free`；也可在页面上临时填写）。
             """
         )
 

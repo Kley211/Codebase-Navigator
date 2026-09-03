@@ -18,7 +18,7 @@ PROVIDERS = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "env": "OPENROUTER_API_KEY",
-        "model": "xiaomi/mimo-v2-flash:free",
+        "model": "z-ai/glm-5.2:free",
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
@@ -59,7 +59,7 @@ def resolve_config(
             model=model or os.getenv("LLM_MODEL") or "qwen2.5-coder:7b",
         )
 
-    provider = provider or "deepseek"
+    provider = provider or "openrouter"
     if provider not in PROVIDERS:
         raise ValueError(f"未知提供商：{provider}，可选：{', '.join(PROVIDERS)}")
 
@@ -68,7 +68,8 @@ def resolve_config(
     if not key:
         raise ValueError(
             f"缺少 API Key：请设置环境变量 {info['env']}（或 --api-key 参数）。"
-            f"\nDeepSeek 注册：https://platform.deepseek.com/  OpenRouter：https://openrouter.ai/keys"
+            f"\nOpenRouter 注册：https://openrouter.ai/keys（默认提供商，免费模型 z-ai/glm-5.2:free）"
+            f"\nDeepSeek 注册：https://platform.deepseek.com/"
         )
     return LLMConfig(
         provider=provider,

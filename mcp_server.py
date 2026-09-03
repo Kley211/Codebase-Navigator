@@ -126,8 +126,8 @@ def generate_static_report(repo_path: str) -> str:
 
 
 @server.tool()
-def generate_ai_overview(repo_path: str, provider: str = "deepseek", model: str | None = None) -> str:
-    """生成 AI 代码库学习概览（需要 API Key，默认读取 .env 的 DEEPSEEK_API_KEY）：带 file:line 引用的结构化报告。"""
+def generate_ai_overview(repo_path: str, provider: str = "openrouter", model: str | None = None) -> str:
+    """生成 AI 代码库学习概览（需要 API Key，默认读取 .env 的 OPENROUTER_API_KEY，免费模型 z-ai/glm-5.2:free）：带 file:line 引用的结构化报告。"""
     try:
         config = resolve_config(provider=provider, model=model)
         agent = CodebaseNavigator(repo_path, config)

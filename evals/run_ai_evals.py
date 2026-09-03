@@ -9,7 +9,7 @@
 用法：
   python evals/run_ai_evals.py --filter flask,requests
   python evals/run_ai_evals.py --limit 2
-  python evals/run_ai_evals.py --provider deepseek --model deepseek-chat
+  python evals/run_ai_evals.py --provider openrouter --model z-ai/glm-5.2:free
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def main() -> int:
     parser.add_argument("--clone-dir", default=str(Path(__file__).parent / ".cache"))
     parser.add_argument("--limit", type=int, help="只评测前 N 个仓库")
     parser.add_argument("--filter", help="按名字过滤（逗号分隔）")
-    parser.add_argument("--provider", choices=list(PROVIDERS), default="deepseek")
+    parser.add_argument("--provider", choices=list(PROVIDERS), default="openrouter")
     parser.add_argument("--model", help="模型名称")
     parser.add_argument("--save", help="保存报告原文到目录（便于人工核对幻觉）")
     args = parser.parse_args()
