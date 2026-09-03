@@ -343,15 +343,33 @@ class CodebaseNavigator:
         """针对代码库提问。"""
         return self._run_ask(DEEP_DIVE_PROMPT.format(question=question), question)
 
-    def _orientation_snippet(self, limit: int = 1800) -> str:
-        """紧凑的仓库方位（目录/入口/依赖），供规划器精确指定步骤；不消耗工具预算。"""
+    def _source_files_snippet(self, max_files: int = 60) -> str:
+        """源码文件路径清单（过滤测试/文档），让规划能点名真实文件。"""
+        from .tools.file_explorer import CODE_EXTENSIONS, _walk_filtered
+
+        repo = Path(self.repo_path)
+        rels: list[str] = []
+        for p in _walk_filtered(repo):
+            if p.suffix not in CODE_EXTENSIONS:
+                continue
+            rel = p.as_posix()
+            head = rel.split("/")[0]
+            if head in ("test", "tests", "docs", "examples", "example", "benchmarks"):
+                continue
+            rels.append(rel)
+        rels.sort(key=lambda r: (r.count("/"), len(r), r))
+        return "\n".join(rels[:max_files])
+
+    def _orientation_snippet(self, limit: int = 2600) -> str:
+        """紧凑的仓库方位（源码文件清单/目录/入口/依赖），供规划器精确指定步骤；不消耗工具预算。"""
         from .tools.file_explorer import list_directory_structure
         from .tools.code_analyzer import analyze_dependencies, find_entry_points
 
         sections = [
-            ("目录（深度 2）", lambda: list_directory_structure(self.repo_path, max_depth=2), 700),
-            ("入口", lambda: find_entry_points(self.repo_path), 500),
-            ("依赖", lambda: analyze_dependencies(self.repo_path), 500),
+            ("源码文件清单", lambda: self._source_files_snippet(), 1200),
+            ("目录（深度 2）", lambda: list_directory_structure(self.repo_path, max_depth=2), 500),
+            ("入口", lambda: find_entry_points(self.repo_path), 450),
+            ("依赖", lambda: analyze_dependencies(self.repo_path), 450),
         ]
         parts: list[str] = []
         used = 0
