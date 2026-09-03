@@ -243,6 +243,24 @@ button:hover { filter: brightness(1.05); }
 #progress-status p { font-family: var(--font-mono); font-size: 13px; color: var(--cn-text); }
 #progress-status code { background: transparent; border: 0; color: var(--cn-amber2); font-weight: 600; }
 
+/* 带读陪练（Tab 05） */
+#tutor-actions { align-items: flex-end; }
+#tutor-roadmap {
+  background: #0b100d;
+  border: 1px solid var(--cn-line);
+  border-left: 3px solid var(--cn-amber);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 4px 0 10px;
+}
+#tutor-roadmap ol { padding-left: 1.7em; line-height: 1.9; }
+#tutor-roadmap p, #tutor-roadmap li { font-size: 13.5px; }
+#tutor-roadmap .prose blockquote, #tutor-roadmap blockquote { margin: 0.6em 0; }
+#tutor-summary { margin: 2px 0 8px; }
+#tutor-summary p { font-family: var(--font-mono); font-size: 13px; color: var(--cn-text); }
+#tutor-summary code { background: transparent; border: 0; color: var(--cn-amber2); font-weight: 600; }
+#tutor-send-row { align-items: flex-end; }
+
 /* 底部示例 */
 .cn-footer { margin-top: 34px; padding-top: 20px; border-top: 1px dashed var(--cn-line2); }
 .cn-foot-head { display: flex; align-items: center; gap: 10px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--cn-amber); margin-bottom: 14px; }

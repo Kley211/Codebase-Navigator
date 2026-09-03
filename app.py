@@ -124,11 +124,11 @@ def _default_plan_path() -> Path:
     return Path.cwd() / f"learn-{Path(repo_path).name}.md"
 
 
-def _tutor_start(regen: bool) -> tuple[list, str]:
-    """启动带读陪练：复用/生成剧本 → 新建 WebTutor 会话并输出开场引导。"""
+def _tutor_start(regen: bool) -> tuple[list, str, str]:
+    """启动带读陪练：复用/生成剧本 → 输出 RoadMap 总览 + 开场引导。"""
     agent = state["agent"]
     if not agent or not state["repo_path"]:
-        return [], "请先加载仓库（带读陪练是 AI 功能，需要 API Key）。"
+        return [], "请先加载仓库（带读陪练是 AI 功能，需要 API Key）。", ""
     try:
         plan_text = state["tutor_plan"]
         plan_path = _default_plan_path()
@@ -141,8 +141,9 @@ def _tutor_start(regen: bool) -> tuple[list, str]:
             state["tutor_plan"] = plan_text
         tutor = WebTutor(agent, plan_text)
         state["tutor"] = tutor
+        roadmap = tutor.roadmap_md()
         history = [{"role": "assistant", "content": m} for m in tutor.start()]
-        return history, tutor.summary()
+        return history, tutor.summary(), roadmap
     except Exception as e:
         state["tutor"] = None
         plan_name = Path(state["repo_path"]).name if state["repo_path"] else "仓库名"
@@ -151,23 +152,23 @@ def _tutor_start(regen: bool) -> tuple[list, str]:
             f"可稍后重试；若多次失败，先用 CLI 生成剧本：`python cli.py <仓库> --learn`，"
             f"再把生成的 `learn-{plan_name}.md` 放到项目目录，最后点「开始带读」。"
         )
-        return [{"role": "assistant", "content": note}], "启动失败"
+        return [{"role": "assistant", "content": note}], "启动失败", ""
 
 
-def tutor_start() -> tuple[list, str]:
+def tutor_start() -> tuple[list, str, str]:
     """「开始带读」：优先复用已有剧本，秒开新会话。"""
     return _tutor_start(regen=False)
 
 
-def tutor_regen() -> tuple[list, str]:
+def tutor_regen() -> tuple[list, str, str]:
     """「重新生成剧本」：忽略旧剧本，让 AI 重新生成一份。"""
     return _tutor_start(regen=True)
 
 
-def tutor_reset() -> tuple[list, str]:
-    """「结束会话」：结束当前会话，保留剧本供下次秒开。"""
+def tutor_reset(roadmap: str = "") -> tuple[list, str, str]:
+    """「结束会话」：结束当前会话，保留 RoadMap 与剧本供下次秒开。"""
     state["tutor"] = None
-    return [], "会话已结束。点「开始带读」再来一轮（沿用已生成的剧本）。"
+    return [], "会话已结束。点「开始带读」再来一轮（沿用已生成的剧本）。", roadmap
 
 
 def tutor_send(message: str, history: list) -> tuple[list, str, str]:
@@ -348,14 +349,18 @@ def build_app() -> gr.Blocks:
 
             with gr.Tab("05 · 带读陪练"):
                 gr.Markdown(
-                    "把带读剧本变成**苏格拉底式一问一答**：每步先按「读这里」精读 → 自检判定 → 动手实验 → 毕业关卡。"
-                    "验收标准贯穿全程：**能复述 + 能改 + 能讲**。"
-                    "首次点「开始带读」会用 AI 生成剧本，可能需要 1-2 分钟。"
+                    "**先看 RoadMap 认清全程，再按步骤带读**：每步 精读 → 苏格拉底自检 →（可选）动手 → 毕业关卡。"
+                    "验收 = **能复述 + 能讲**（能改是加分项，动手可 `跳过`）。"
+                    "第一次点「开始带读」会用 AI 生成剧本（约 1-2 分钟），之后秒开。"
                 )
                 with gr.Row(elem_id="tutor-actions"):
                     tutor_start_btn = gr.Button("开始带读", variant="primary", elem_id="tutor-start")
                     tutor_regen_btn = gr.Button("重新生成剧本", variant="secondary", elem_id="tutor-regen")
                     tutor_stop_btn = gr.Button("结束会话", variant="stop", elem_id="tutor-stop")
+                tutor_roadmap = gr.Markdown(
+                    "（还没有路线图。点「开始带读」会先生成 RoadMap，再逐步带读。）",
+                    elem_id="tutor-roadmap",
+                )
                 tutor_summary = gr.Markdown(
                     "尚未开始。加载仓库后点「开始带读」。", elem_id="tutor-summary"
                 )
@@ -366,7 +371,7 @@ def build_app() -> gr.Blocks:
                 )
                 with gr.Row(elem_id="tutor-send-row"):
                     tutor_input = gr.Textbox(
-                        placeholder="读完输入 go 开始自检；直接回答苏格拉底追问；汇报动手结果；卡住可输入「提示」；想结束输入「退出」。",
+                        placeholder="读完输入 go 开始自检；直接回答追问；不懂可输入 问：你的问题；动手可 跳过；结束输入 退出。",
                         scale=4,
                         elem_id="tutor-input",
                     )
@@ -383,9 +388,9 @@ def build_app() -> gr.Blocks:
         progress_load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_reset_btn.click(progress_reset, None, [progress_group, progress_label])
         progress_group.change(progress_toggle, progress_group, progress_label)
-        tutor_start_btn.click(tutor_start, None, [tutor_chat, tutor_summary])
-        tutor_regen_btn.click(tutor_regen, None, [tutor_chat, tutor_summary])
-        tutor_stop_btn.click(tutor_reset, None, [tutor_chat, tutor_summary])
+        tutor_start_btn.click(tutor_start, None, [tutor_chat, tutor_summary, tutor_roadmap])
+        tutor_regen_btn.click(tutor_regen, None, [tutor_chat, tutor_summary, tutor_roadmap])
+        tutor_stop_btn.click(tutor_reset, [tutor_roadmap], [tutor_chat, tutor_summary, tutor_roadmap])
         tutor_send_btn.click(
             tutor_send, [tutor_input, tutor_chat], [tutor_chat, tutor_summary, tutor_input]
         )

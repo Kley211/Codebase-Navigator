@@ -19,7 +19,7 @@ from src.tools import call_tool
 from src.context import build_overview_context, _is_large, _module_layout
 from src.progress import MILESTONES, ProgressStore
 from src.learn import validate_learn_plan
-from src.tutor import parse_plan
+from src.tutor import parse_plan, WebTutor, _is_question
 
 
 def make_fake_repo() -> Path:
@@ -169,13 +169,72 @@ def main() -> int:
         print("[❌] 带读剧本解析缺少 自检问句/判定要点/动手任务")
         failed += 1
 
+    # WebTutor 离线状态机：RoadMap 总览 → 途中自由提问 → 自检通过 → 动手可跳过 → 下一步
+    class _FakeLLM:
+        """离线的 LLM 替身：判定一律通过，答疑直接返回（不真实调模型）。"""
+        def __init__(self):
+            self.judged = 0
+            self.answers = []
+        def direct(self, system, user, temperature=0.2, max_tokens=800):
+            self.judged += 1
+            return '{"mastered": true, "comment": "回答到位", "follow_up": ""}'
+        def chat(self, message):
+            self.answers.append(message)
+            return "答疑：它负责把请求路由到对应视图，见 app.py:8。"
+
+    fake = _FakeLLM()
+    wt = WebTutor(fake, make_good_learn_plan())
+    roadmap = wt.roadmap_md()
+    if "RoadMap" not in roadmap or f"共 {len(wt.steps)} 步" not in roadmap:
+        print("[❌] RoadMap 总览缺步骤")
+        failed += 1
+    wt.start()
+    if wt.phase != "read" or wt.idx != 0:
+        print("[❌] WebTutor 启动后应停在第 1 步阅读")
+        failed += 1
+    # 阅读阶段自由提问：答疑但不推进
+    replies = wt.respond("这个项目是怎么跑起来的？")
+    if not fake.answers or wt.phase != "read" or not any("答疑：" in m for m in replies):
+        print("[❌] 阅读阶段自由提问未答疑")
+        failed += 1
+    # 进入自检后提问：答疑并回到原题，不消耗判定次数
+    fake.answers.clear()
+    judged_before = fake.judged
+    wt.respond("go")
+    if wt.phase != "quiz":
+        print("[❌] go 后应进入自检")
+        failed += 1
+    replies = wt.respond("为什么要这样设计？")
+    if wt.j != 0 or not fake.answers or fake.judged != judged_before:
+        print("[❌] 自检中提问应答疑且不消耗判定")
+        failed += 1
+    if not any("回到刚才的自检" in m for m in replies):
+        print("[❌] 答疑后应回到原自检题")
+        failed += 1
+    # 两个自检要点依次通过 → 进入可选动手
+    wt.respond("我的理解：它负责解析请求，并把结果交给调用方。")
+    wt.respond("如果去掉这步，调用方拿不到结果，所以不能省。")
+    if wt.phase != "task":
+        print(f"[❌] 自检通过后应进入动手（可选），实际 phase={wt.phase}")
+        failed += 1
+    # 跳过动手 → 解锁下一步
+    replies = wt.respond("跳过")
+    if wt.idx != 1 or wt.phase != "read" or not any("第 2/5 步" in m for m in replies):
+        print("[❌] 跳过动手后应进入第 2 步")
+        failed += 1
+    # 提问识别规则
+    if not _is_question("为什么这里要这么写？") or not _is_question("问：入口文件是哪个") or _is_question("因为它更简单"):
+        print("[❌] 自由提问识别规则异常")
+        failed += 1
+
     if failed == 0:
         print("[✅] 静态报告")
         print("[✅] 带读剧本结构校验")
         print("[✅] 带读剧本解析")
+        print("[✅] RoadMap / 自由提问 / 动手可选")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 3 - failed}/{len(checks) + 3} 通过")
+    print(f"\n结果：{len(checks) + 4 - failed}/{len(checks) + 4} 通过")
     return 0 if failed == 0 else 1
 
 

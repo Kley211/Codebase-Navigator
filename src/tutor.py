@@ -21,6 +21,34 @@ from .learn import split_steps
 
 MAX_ATTEMPTS = 4  # 每个自检要点最多追问轮数
 
+SKIP_WORDS = ("跳过", "跳過", "skip", "先跳过", "不做了", "不想做", "暂不")
+
+_QUESTION_STARTS = (
+    "问", "提问", "为什么", "怎么", "如何", "是什么", "什么是", "啥是",
+    "解释", "讲讲", "讲一下", "说明", "能不能", "能否", "可以", "请",
+    "帮我", "哪个", "哪些", "哪里", "区别", "干嘛", "入口", "流程",
+)
+_QUESTION_LEADS = ("这个", "那个", "这段", "这里", "该", "项目", "代码", "函数", "模块", "文件", "类")
+_QUESTION_WORDS = (
+    "为什么", "怎么", "如何", "是什么", "什么是", "啥", "能不能", "能否",
+    "可以", "区别", "干嘛", "入口", "流程", "作用", "哪里", "哪些",
+)
+
+
+def _is_question(text: str) -> bool:
+    """判断用户输入是「自由提问」而不是命令或回答。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if t.startswith(_QUESTION_STARTS):
+        return True
+    if t.endswith(("？", "?")):
+        return True
+    if t.startswith(_QUESTION_LEADS) and any(w in t[:24] for w in _QUESTION_WORDS):
+        return True
+    return False
+
+
 _SECTION_LABELS = (
     "目标", "读这里", "讲解要点", "动手任务",
     "苏格拉底自检", "合格回答应包含", "解锁条件",
@@ -46,6 +74,16 @@ TASK_JUDGE_SYS = """你是「Codebase Navigator」的带读导师。学习者在
 1. done=true 的条件：汇报里包含「做了什么改动/命令 + 观察到的实际结果 + 一句话解释为什么」（三要素缺一不可）。
 2. 未达标 → done=false，comment 指出缺哪一要素；follow_up 出一个引导问题让他补上（禁止直接给答案）。
 3. 只输出一个 JSON 对象：{"done": bool, "comment": "…", "follow_up": "…"}，不要输出任何其他内容。"""
+
+GRAD_TALK_SYS = """你是「Codebase Navigator」的毕业把关导师。学习者给你一份 3 分钟口头讲解稿，用来验证「能讲」。
+
+判断标准（四项都覆盖才算过）：
+1. 这个项目解决什么问题、给谁用；
+2. 整体架构 / 入口与核心链路怎么走；
+3. 核心模块各负责什么、怎么协作；
+4. 至少一个「为什么这样设计」的自己的判断。
+
+规则：pass=true 时 comment 具体肯定他讲得好的地方；pass=false 时 comment 指出缺哪一项，follow_up 出一个问题引导他补上。只输出 JSON：{"pass": bool, "comment": "…", "follow_up": "…"}。"""
 
 HINT_SYS = """你是「Codebase Navigator」的带读导师。学习者卡住了，需要提示。
 给出 1-2 句不剧透答案的引导（比如让他回去看哪一段、注意哪个函数、思考哪个角度），不要说破结论。直接输出提示文本。"""
@@ -226,7 +264,8 @@ class TutorSession:
         self.say("=" * 64)
         self.say("🎓 Codebase Navigator · 带读陪练会话")
         self.say(f"剧本共 {len(self.steps)} 步。每一步：先按提示读代码，再接受苏格拉底式自检；")
-        self.say("自检和动手实验都通过才会解锁下一步。随时输入「提示」要引导，输入「退出」结束。")
+        self.say("动手实验为可选（输入「跳过」可直接下一步）。随时输入「提示」要引导、")
+        self.say("用「问：你的问题」或句尾带 ? 直接提问；输入「退出」结束。")
         self.say("=" * 64)
 
         for idx, step in enumerate(self.steps, 1):
@@ -260,7 +299,7 @@ class TutorSession:
                 self.say(f"  · {h}")
 
         while True:
-            cmd = self._read("读完请输 go 开始自检（或 提示 / 退出）：")
+            cmd = self._read("读完请输 go 开始自检（或 提示 / 问：… / 退出）：")
             if cmd == "退出":
                 self.status = "aborted"
                 return
@@ -269,7 +308,10 @@ class TutorSession:
                 continue
             if cmd == "go":
                 break
-            self.say("（请输入 go / 提示 / 退出）")
+            if _is_question(cmd):
+                self._answer_free(step, cmd)
+                continue
+            self.say("（请输入 go / 提示 / 退出，或用「问：…」提问）")
 
         # —— 苏格拉底自检：逐条对照「合格回答应包含」——
         rubric = step.rubric or [step.objective]
@@ -305,6 +347,9 @@ class TutorSession:
             if ans == "提示":
                 self._hint(step, point)
                 continue
+            if _is_question(ans):
+                self._answer_free(step, ans)
+                continue
             history.append((follow, ans))
             verdict = self._verdict(
                 JUDGE_SYS, _judge_user(step, follow, point, history, ans), "mastered"
@@ -322,19 +367,25 @@ class TutorSession:
         self.say("")
 
     def _task_phase(self, step: LearnStep) -> None:
-        self.say("\n🛠️ 动手任务（做之前先不看答案，做出来才算数）：")
+        self.say("\n🛠️ 动手任务（可选）——想亲手验证就做，做完回来汇报；不想做输入「跳过」直接下一步：")
         self._say_block(step.task)
         self.say("")
         history: list[tuple[str, str]] = []
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if self.status == "aborted":
                 return
-            ans = self._read("完成后汇报：你改了什么、看到了什么结果、为什么（或 提示 / 退出）：")
+            ans = self._read("完成后汇报：你改了什么、看到了什么结果、为什么（或 跳过 / 提示 / 退出）：")
             if ans == "退出":
                 self.status = "aborted"
                 return
             if ans == "提示":
                 self._hint(step, step.task)
+                continue
+            if ans in SKIP_WORDS:
+                self.say("⏭️ 已跳过动手实验。先用自己的话复述这一步，然后进入下一步。")
+                return
+            if _is_question(ans):
+                self._answer_free(step, ans)
                 continue
             history.append(("", ans))
             verdict = self._verdict(
@@ -361,26 +412,49 @@ class TutorSession:
             hint = f"回到「读这里」的段落，重点想：这段代码的职责是什么？为什么这么写？({e})"
         self.say(f"💡 提示：{hint.strip()}")
 
+    def _answer_free(self, step: LearnStep, text: str) -> None:
+        """自由提问：结合仓库直接答疑，不消耗自检次数。"""
+        ctx = f"学习者正在学「{step.title}」。\n" if step else ""
+        prompt = (
+            f"{ctx}这是「带读陪练」里的自由提问。请结合仓库代码直接解答："
+            "关键结论带 `路径:行号` 引用；不要整段贴代码；解答完用一句「回到当前学习」的话收尾。\n\n"
+            f"学习者问：{text}"
+        )
+        try:
+            answer = self.llm.chat(prompt)
+        except Exception as e:
+            answer = f"（自由提问暂时不可用：{e}）"
+        self.say(f"\n💬 你问：{text}")
+        self.say(answer)
+
     # ---------- 毕业关卡 ----------
     def _run_graduation(self) -> None:
         self.say("\n" + "🏁" * 10)
-        self.say("全部步骤已走完，进入毕业关卡")
+        self.say("全部步骤已走完，进入毕业关卡（可选）")
         self.say("🏁" * 10)
         if self.tail:
             self.say(self.tail)
         self.say("")
-        self.say("完成「改出来」后回来汇报（改了什么 / 结果 / 为什么），我会帮你把关。")
+        self.say("二选一即可：① 完成「改出来」后回来汇报；② 把 3 分钟讲解稿贴在「讲：」后面。")
+        self.say("两者都不想做，输入「跳过」结束（验收 = 能复述 + 能讲，能改是加分项）。")
         history: list[tuple[str, str]] = []
         for attempt in range(1, MAX_ATTEMPTS + 1):
             if self.status == "aborted":
                 return
-            ans = self._read("毕业汇报（或 跳过 / 退出）：")
+            ans = self._read("毕业汇报（改完汇报 / 讲：讲解稿 / 跳过 / 退出）：")
             if ans == "退出":
                 self.status = "aborted"
                 return
-            if ans in ("跳过", "skip"):
-                self.say("毕业关卡可稍后补做。别忘了：验收 = 能复述 + 能改 + 能讲。")
+            if ans in SKIP_WORDS:
+                self.say("⏭️ 已跳过毕业关卡。仍建议用 3 分钟给别人讲一遍这个项目。")
                 return
+            if re.match(r"^讲[:：]\s*", ans):
+                if self._grad_talk_check(re.sub(r"^讲[:：]\s*", "", ans)):
+                    return
+                continue
+            if _is_question(ans):
+                self._answer_free(LearnStep(title="剧末验收", raw=self.tail or ""), ans)
+                continue
             history.append(("", ans))
             verdict = self._verdict(
                 TASK_JUDGE_SYS,
@@ -399,6 +473,39 @@ class TutorSession:
                 self.say(f"🧑‍🏫 追问：{follow}")
         self.say("（毕业关卡暂未达标也没关系，完成后随时回来汇报。）")
 
+    def _grad_talk_check(self, talk: str) -> bool:
+        """毕业「能讲」把关：讲解稿达标返回 True。"""
+        if not talk:
+            self.say("（请把讲解稿贴在「讲：」后面，例如：讲：这个项目是……）")
+            return False
+        self.say("\n🧑‍🏫 收到 3 分钟讲解稿，我来把关：")
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if self.status == "aborted":
+                return False
+            prompt = (
+                f"# 仓库带读剧末验收背景\n{(self.tail or '')[:600]}\n\n"
+                f"# 学习者的 3 分钟讲解稿\n{talk}\n\n请按规则输出 JSON 判定。"
+            )
+            verdict = self._verdict(GRAD_TALK_SYS, prompt, "pass")
+            if verdict["pass"]:
+                self.say(f"🎓 恭喜毕业——能讲也过关了！{verdict['comment'] or ''}")
+                self.say("现在你可以：① 给别人讲 3 分钟这个项目；② 照「下一步」去提第一个 PR。")
+                return True
+            note = verdict.get("comment") or ""
+            if note:
+                self.say(f"  · {note}")
+            if attempt == MAX_ATTEMPTS:
+                self.say("（讲解稿暂未达标也没关系，可以先听别人怎么讲，再回来补。）")
+                return False
+            follow = verdict.get("follow_up") or ""
+            if follow:
+                self.say(f"🧑‍🏫 追问：{follow}")
+            talk = self._read("补充后的讲解稿（直接粘贴，或 退出）：")
+            if talk == "退出":
+                self.status = "aborted"
+                return False
+        return False
+
 
 def run_tutor_loop(llm, plan_text: str, ask=input, say=print) -> str:
     """启动一次带读会话，返回 completed / aborted / failed。"""
@@ -415,7 +522,7 @@ class WebTutor:
     PHASE_NAMES = {
         "read": "阅读",
         "quiz": "苏格拉底自检",
-        "task": "动手实验",
+        "task": "动手(可选)",
         "grad": "毕业关卡",
         "done": "已结束",
         "idle": "未开始",
@@ -463,14 +570,33 @@ class WebTutor:
             hint = f"回到「读这里」的段落，想这段代码的职责和为什么这么写。（{e}）"
         self._emit(f"💡 提示：{hint.strip()}")
 
+    # ---------- RoadMap 总览 ----------
+    def roadmap_md(self) -> str:
+        """整条学习路线总览：先看路线，再按步骤逐步带读。"""
+        if not self.steps:
+            return "暂无路线。加载仓库后点「开始带读」生成。"
+        lines = [f"🗺️ **RoadMap · 共 {len(self.steps)} 步**", ""]
+        for i, s in enumerate(self.steps, 1):
+            goal = (s.objective or "").replace("\n", " ").strip()
+            badge = " 🛠️" if s.task else ""
+            lines.append(f"{i}. **{s.title}**{badge}" + (f"　— {goal[:70]}" if goal else ""))
+        lines += [
+            "",
+            "> 路线即编号顺序：每步 = 精读 → 苏格拉底自检 → 动手实验（可选）。",
+            "> 学习途中随时可输入 `问：你的问题`（或句尾带 `？`）直接提问，不打断进度。",
+        ]
+        return "\n".join(lines)
+
     # ---------- 会话入口 ----------
     def start(self) -> list[str]:
         if not self.steps:
             self._emit("⚠️ 剧本解析失败：没有找到可用步骤，请点「重新生成剧本」。")
             return self._flush()
         self.idx = 0
-        self._emit("🎓 **带读陪练开始**：共 {n} 步。每步先精读、再接受苏格拉底式自检；"
-                   "自检与动手实验都通过才解锁下一步。\n\n命令：`go`(读完/继续) · `提示` · `退出`".format(n=len(self.steps)))
+        self._emit("🎓 **带读陪练开始**：共 {n} 步。先看上方 RoadMap 了解全程，"
+                   "再按步骤 精读 → 苏格拉底自检 →（可选）动手。\n\n"
+                   "命令：`go`(读完/继续) · `提示`(要引导) · `问：…`(自由提问) · `跳过`(跳过动手) · `退出`"
+                   .format(n=len(self.steps)))
         self._enter_step()
         return self._flush()
 
@@ -491,25 +617,34 @@ class WebTutor:
         self.j = 0
         self.attempts = 0
         self.history = []
-        self._emit("读完输入 `go` 开始自检（可随时输入 `提示`）。")
+        self._emit("读完输入 `go` 开始自检（不懂可 `问：…` 直接问，卡住可 `提示`）。")
 
     def _enter_quiz(self) -> None:
         step = self.steps[self.idx]
         rubric = step.rubric or [step.objective]
         if self.j < len(rubric):
-            questions = step.questions or ["用你自己的话讲讲刚读的这段在做什么？"]
-            question = questions[self.j % len(questions)]
             self._emit(f"🎯 **自检 {self.j + 1}/{len(rubric)}**｜要求覆盖：{rubric[self.j]}")
-            self._emit(f"🧑‍🏫 {question}")
+            self._ask_quiz_question()
             self.phase = "quiz"
             self.attempts = 0
             self.history = []
             return
         self._enter_task()
 
+    def _current_quiz_question(self) -> str:
+        """当前自检点待回答的问句（优先返回未答完的追问）。"""
+        if self.follow:
+            return self.follow
+        step = self.steps[self.idx]
+        questions = step.questions or ["用你自己的话讲讲刚读的这段在做什么？"]
+        return questions[self.j % len(questions)]
+
+    def _ask_quiz_question(self) -> None:
+        self._emit(f"🧑‍🏫 {self._current_quiz_question()}")
+
     def _enter_task(self) -> None:
         step = self.steps[self.idx]
-        self._emit("🛠️ **动手任务**（先动手，做完再回来汇报）：")
+        self._emit("🛠️ **动手任务（可选）**——目的是加深理解；不想动手可输入 `跳过` 直接下一步：")
         self._emit(step.task or "（本步没有明确任务，用一句话说说你能怎么验证理解。）")
         self.phase = "task"
         self.attempts = 0
@@ -527,13 +662,14 @@ class WebTutor:
             self._enter_graduation()
 
     def _enter_graduation(self) -> None:
-        self._emit("🏁 **进入毕业关卡**（验收 = 能复述 + 能改 + 能讲）")
+        self._emit("🏁 **进入毕业关卡（可选）**——目标：能给别人讲清楚这个项目。")
         if self.tail:
             self._emit(self.tail)
         self.phase = "grad"
         self.attempts = 0
         self.history = []
-        self._emit("完成「改出来」后回来汇报：改了什么 / 看到什么结果 / 为什么。")
+        self._emit("二选一：① 完成「改出来」后回来汇报（改了什么/结果/为什么）；"
+                   "② 把 3 分钟讲解稿贴在 `讲：` 后面。都不想做就输入 `跳过` 结束。")
 
     # ---------- 逐轮响应 ----------
     def respond(self, text: str) -> list[str]:
@@ -550,6 +686,21 @@ class WebTutor:
             return self._flush()
         if text in ("提示", "hint"):
             self._hint(self._context_hint())
+            return self._flush()
+        if self.phase == "task" and text in SKIP_WORDS:
+            self._emit("⏭️ 已跳过动手实验。先用自己的话把这一步复述一遍，再继续下一步。")
+            self._finish_step()
+            return self._flush()
+        if self.phase == "grad" and text in SKIP_WORDS:
+            self.phase = "done"
+            self._emit("⏭️ 已跳过毕业综合改造。毕业非强制；仍建议用 3 分钟给别人讲一遍项目，"
+                       "或用 `问：…` 继续追问。")
+            return self._flush()
+        if self.phase == "grad" and re.match(r"^讲[:：]\s*", text):
+            self._answer_grad_talk(re.sub(r"^讲[:：]\s*", "", text))
+            return self._flush()
+        if _is_question(text):
+            self._answer_free_question(text)
             return self._flush()
         if self.phase == "read":
             if text in ("go", "开始", "开始自检"):
@@ -581,9 +732,8 @@ class WebTutor:
     def _answer_quiz(self, answer: str) -> None:
         step = self.steps[self.idx]
         rubric = step.rubric or [step.objective]
-        questions = step.questions or ["用你自己的话讲讲这段在做什么？"]
         point = rubric[min(self.j, len(rubric) - 1)]
-        question = self.follow or questions[self.j % len(questions)]
+        question = self._current_quiz_question()
         self.attempts += 1
         self.history.append((question, answer))
         verdict = self._verdict(JUDGE_SYS, _judge_user(step, question, point, self.history, answer), "mastered")
@@ -653,6 +803,65 @@ class WebTutor:
             self._emit(f"🧑‍🏫 追问：{self.follow}")
         else:
             self._emit("请再试一次：说清你改了什么、看到了什么结果、为什么。")
+
+    def _answer_free_question(self, text: str) -> None:
+        """会话中自由提问：结合仓库答疑，不消耗自检次数、不推进进度。"""
+        step = self.steps[self.idx] if 0 <= self.idx < len(self.steps) else None
+        ctx = ""
+        if step:
+            ctx = f"学习者正在学第 {self.idx + 1}/{len(self.steps)} 步「{step.title}」。\n"
+        prompt = (
+            f"{ctx}这是「带读陪练」里的自由提问。请结合仓库代码直接解答："
+            "关键结论带 `路径:行号` 引用；不要整段贴代码；解答完用一句「回到当前学习」的话收尾。\n\n"
+            f"学习者问：{text}"
+        )
+        try:
+            answer = self.llm.chat(prompt)
+        except Exception as e:
+            answer = f"（自由提问暂时不可用：{e}）"
+        self._emit(f"💬 **你问**：{text}")
+        self._emit(answer)
+        self._resume_prompt()
+
+    def _resume_prompt(self) -> None:
+        """答疑后把学习者带回当前待办，避免进度被打断。"""
+        if self.phase == "quiz":
+            self._emit("（回到刚才的自检——用自己的话回答，先别照抄上面的讲解。）")
+            self._ask_quiz_question()
+        elif self.phase == "task":
+            self._emit("（回到动手实验——完成后来汇报；想先推进可输入 `跳过`。）")
+        elif self.phase == "grad":
+            self._emit("（回到毕业关卡——改完回来汇报，或 `讲：` 贴 3 分钟讲解稿，或 `跳过` 结束。）")
+        elif self.phase == "read":
+            self._emit("（回到阅读——读完这一段后输入 `go` 开始自检。）")
+
+    def _answer_grad_talk(self, talk: str) -> None:
+        """毕业「能讲」路径：对 3 分钟讲解稿做口头把关。"""
+        if not talk:
+            self._emit("（请把讲解稿贴在 `讲：` 后面，例如：`讲：这个项目是……`）")
+            return
+        self.attempts += 1
+        prompt = (
+            f"# 仓库带读剧末验收背景\n{(self.tail or '')[:600]}\n\n"
+            f"# 学习者的 3 分钟讲解稿\n{talk}\n\n请按规则输出 JSON 判定。"
+        )
+        verdict = self._verdict(GRAD_TALK_SYS, prompt, "pass")
+        if verdict["pass"]:
+            self.phase = "done"
+            self._emit(f"🎓 **恭喜毕业——能讲也过关了！** {verdict['comment'] or ''}")
+            self._emit("现在你可以：① 给别人讲 3 分钟这个项目；② 照剧末「下一步」去提第一个 PR。")
+            return
+        if verdict.get("comment"):
+            self._emit(f"· {verdict['comment']}")
+        if self.attempts >= MAX_ATTEMPTS:
+            self.phase = "done"
+            self._emit("（讲解稿暂未达标也没关系，可以先听别人怎么讲这个项目，再回来补。）")
+            return
+        self.follow = verdict.get("follow_up") or ""
+        if self.follow:
+            self._emit(f"🧑‍🏫 追问：{self.follow}（补全后再以 `讲：` 开头发一次）")
+        else:
+            self._emit("请补上缺的要点后再次发送（仍以 `讲：` 开头）。")
 
     # ---------- 状态摘要 ----------
     def summary(self) -> str:
