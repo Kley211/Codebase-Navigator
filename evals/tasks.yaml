@@ -18,8 +18,9 @@ tasks:
         gold_terms: [dispatch_request, RequestContext, push]
       - q: URL 路由匹配是基于什么机制实现的？
         gold_files:
-          - src/flask/routing.py
-        gold_terms: [Map, Rule, match]
+          - src/flask/sansio/app.py
+          - src/flask/ctx.py
+        gold_terms: [url_map, add_url_rule, Map]
 
   - repo: requests
     questions:
