@@ -34,6 +34,37 @@ if hasattr(sys.stdout, "reconfigure"):
 # 全局状态：当前加载的仓库与 Agent
 state = {"repo_path": None, "agent": None, "tutor": None, "tutor_plan": None}
 progress_store = ProgressStore()
+_WEB_DIR = Path(__file__).resolve().parent / "web"
+
+# 让 gradio 直接托管 web/ 下的静态文件（mermaid.min.js 等），避免每次走公网 CDN
+try:
+    gr.set_static_paths([str(_WEB_DIR)])
+except Exception:
+    pass
+
+
+def _ensure_mermaid_js() -> None:
+    """web/mermaid.min.js 缺失时从 CDN 下载一次；失败静默，渲染时自动回退在线加载。"""
+    target = _WEB_DIR / "mermaid.min.js"
+    if target.exists() and target.stat().st_size > 100_000:
+        return
+    import urllib.request
+
+    urls = [
+        "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js",
+        "https://unpkg.com/mermaid@10.9.1/dist/mermaid.min.js",
+    ]
+    for url in urls:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Codebase-Navigator/1.0"})
+            data = urllib.request.urlopen(req, timeout=30).read()
+            if len(data) > 100_000:
+                target.write_bytes(data)
+                print(f"[i] 已下载 Mermaid 本地副本 → {target}（{len(data) // 1024} KB），"
+                      "之后图可在无 CDN 环境下渲染。")
+                return
+        except Exception as e:
+            print(f"[i] Mermaid 本地副本下载失败（将回退 CDN）：{e}")
 
 # 常用模型快捷选项
 MODEL_OPTIONS = {
@@ -133,14 +164,17 @@ _TUTOR_DIAGRAM_IDLE = (
 def _tutor_diagram_out() -> str:
     """当前带读步骤的局部配图（无图/未开始时显示占位）。"""
     tutor = state["tutor"]
-    if not tutor or getattr(tutor, "idx", -1) < 0:
+    if not tutor or getattr(tutor, "idx", -1) < 0 or getattr(tutor, "phase", "") not in (
+        "read", "quiz", "task", "grad"
+    ):
         return _TUTOR_DIAGRAM_IDLE
     code = tutor.current_diagram()
     if not code:
         return _TUTOR_DIAGRAM_IDLE
     step = tutor.steps[tutor.idx]
+    tag = " · 按需配图" if getattr(tutor, "pending_diagram", "") else ""
     caption = (
-        f"第 {tutor.idx + 1}/{len(tutor.steps)} 步配图 · {step.title or ''}"
+        f"第 {tutor.idx + 1}/{len(tutor.steps)} 步配图{tag} · {step.title or ''}"
         "（读图时对照上方「读这里」的行号）"
     )
     return mermaid_html(code, caption=caption)
@@ -404,6 +438,7 @@ def build_app() -> gr.Blocks:
                     "**先看 RoadMap 认清全程，再按步骤带读**：每步 精读 → 苏格拉底自检 →（可选）动手 → 毕业关卡。"
                     "验收 = **能复述 + 能讲**（能改是加分项，动手可 `跳过`）。"
                     "第一次点「开始带读」会用 AI 生成剧本（约 1-2 分钟），之后秒开。"
+                    "途中看不懂可输入 `问：你的问题`，想看局部图可输入 `画图：请求流程` 这类主题。"
                 )
                 with gr.Row(elem_id="tutor-actions"):
                     tutor_start_btn = gr.Button("开始带读", variant="primary", elem_id="tutor-start")
@@ -424,7 +459,7 @@ def build_app() -> gr.Blocks:
                 )
                 with gr.Row(elem_id="tutor-send-row"):
                     tutor_input = gr.Textbox(
-                        placeholder="读完输入 go 开始自检；直接回答追问；不懂可输入 问：你的问题；动手可 跳过；结束输入 退出。",
+                        placeholder="读完输入 go 开始自检；不懂可 问：你的问题；想看局部图输入 画图：请求流程；动手可 跳过；结束输入 退出。",
                         scale=4,
                         elem_id="tutor-input",
                     )
@@ -473,4 +508,5 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Codebase Navigator Web")
     parser.add_argument("--port", type=int, default=7860)
     args = parser.parse_args()
+    _ensure_mermaid_js()
     build_app().launch(server_name="127.0.0.1", server_port=args.port)

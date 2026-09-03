@@ -26,9 +26,15 @@ from .context import SOURCE_EXTENSIONS, _clip, _module_layout
 from .report import _readme_digest
 from .tools.code_analyzer import find_entry_points
 
-# Mermaid 客户端渲染：优先本地库，缺失再懒加载 CDN
-MERMAID_LOCAL = "/web/mermaid.min.js"
-MERMAID_CDN = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"
+# Mermaid 加载来源：先本地文件 → gradio 静态路径 → 两个 CDN 兜底
+MERMAID_LOCAL_JS = [
+    "/web/mermaid.min.js",                  # 手动放入 web/ 的本地副本
+    "/gradio_api/file=web/mermaid.min.js",  # app.py 用 gr.set_static_paths(["web"]) 托管
+]
+MERMAID_CDN_JS = [
+    "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js",
+    "https://unpkg.com/mermaid@10.9.1/dist/mermaid.min.js",
+]
 MAX_MODULES_FACTS = 10    # 架构素材里最多列出的模块数
 MAX_MAP_NODES = 12        # 静态模块地图节点上限
 MAX_RENDER_CHARS = 6000   # 超过则放弃渲染，避免撑爆页面
@@ -40,13 +46,18 @@ def extract_mermaid_block(text: str) -> str | None:
     return m.group(1).strip() if m else None
 
 
-def looks_valid_mermaid(code: str) -> tuple[bool, str]:
+def looks_valid_mermaid(code: str, allow_sequence: bool = False) -> tuple[bool, str]:
     """廉价的 Mermaid 结构预检（不做真正语法解析，只决定是否让模型重写）。"""
     code = (code or "").strip()
-    if not re.match(r"^(flowchart|graph)\s+(TB|TD|BT|LR|RL)\b", code):
-        return False, "必须以 flowchart TD/LR 等开头"
-    if "-->" not in code and "==>" not in code and "-.->" not in code:
-        return False, "缺少连线（--> / ==>）"
+    if allow_sequence and code.startswith("sequenceDiagram"):
+        head_ok = True
+    else:
+        head_ok = bool(re.match(r"^(flowchart|graph)\s+(TB|TD|BT|LR|RL)\b", code))
+    if not head_ok:
+        return False, "必须以 flowchart TD/LR 开头" + ("（或 sequenceDiagram）" if allow_sequence else "")
+    arrows = ("-->", "==>", "-.->", "->>", "-->>", "--)")
+    if not any(a in code for a in arrows):
+        return False, "缺少连线/消息（--> / ==>/->>）"
     for pair in ("[]", "{}", "()"):
         if code.count(pair[0]) != code.count(pair[1]):
             return False, f"{pair[0]}{pair[1]} 括号不配对"
@@ -129,7 +140,14 @@ def architecture_facts(repo_path: str) -> str:
 
 
 _DIAGRAM_HTML_TEMPLATE = """<div class="cn-diagram">
+<div class="cn-diagram-bar">
 __CAPTION__
+<span class="cn-diagram-actions">
+  <button type="button" class="cn-copy-btn" data-copy="src-__UID__">复制源码</button>
+  <a class="cn-mmd-link" href="https://mermaid.live" target="_blank" rel="noopener">mermaid.live ↗</a>
+</span>
+</div>
+<textarea id="src-__UID__" class="cn-mmd-src" readonly>__TEXT__</textarea>
 <div class="cn-diagram-body" id="cn-mmd-__UID__">渲染中…</div>
 <details class="cn-diagram-fallback" style="display:none">
 <summary>渲染失败？查看 / 复制 Mermaid 源码</summary>
@@ -140,6 +158,7 @@ __CAPTION__
 (function () {
   var root = document.getElementById('cn-mmd-__UID__');
   var details = root.parentElement.querySelector('.cn-diagram-fallback');
+  var srcBox = document.getElementById('src-__UID__');
   var code = __PAYLOAD__;
   function esc(s) { return String(s).replace(/[<>&]/g, function (c) { return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]; }); }
   function failed(msg) {
@@ -174,15 +193,28 @@ __CAPTION__
       failed('图解析失败：' + esc(e && e.message || e));
     }
   }
-  function loadFrom(url, next) {
+  function loadChain(list, i) {
+    if (!list || i >= list.length) { failed('未加载到 Mermaid：请联网（CDN）或把 mermaid.min.js 放到 web/ 目录。'); return; }
     var s = document.createElement('script');
-    s.src = url;
-    s.onload = function () { if (window.mermaid) { draw(); } else if (next) { next(); } };
-    s.onerror = function () { if (next) { next(); } };
+    s.src = list[i];
+    s.onload = function () { if (window.mermaid) { draw(); } else { loadChain(list, i + 1); } };
+    s.onerror = function () { loadChain(list, i + 1); };
     document.head.appendChild(s);
   }
   if (window.mermaid) { draw(); }
-  else { loadFrom('__LOCAL__', function () { loadFrom('__CDN__', function () { failed('未加载到 Mermaid（需联网加载 CDN 后重试）。'); }); }); }
+  else { loadChain(__ALL_JS__, 0); }
+  var copyBtn = document.querySelector('[data-copy="src-__UID__"]');
+  if (copyBtn && srcBox) {
+    copyBtn.addEventListener('click', function () {
+      var done = false;
+      srcBox.select();
+      srcBox.setSelectionRange(0, 999999);
+      try { done = document.execCommand('copy'); } catch (e) {}
+      if (!done && navigator.clipboard) { navigator.clipboard.writeText(srcBox.value).then(function () { done = true; }); }
+      copyBtn.textContent = done ? '已复制 ✓' : '复制';
+      setTimeout(function () { copyBtn.textContent = '复制源码'; }, 1600);
+    });
+  }
 })();
 </script>
 """
@@ -200,15 +232,14 @@ def mermaid_html(code: str, caption: str = "") -> str:
 
     uid = uuid.uuid4().hex[:10]
     payload = json.dumps(code, ensure_ascii=False).replace("</", "<\\/")
-    caption_html = (
-        '<div class="cn-diagram-caption">%s</div>' % _html.escape(caption) if caption else ""
-    )
+    caption_html = '<div class="cn-diagram-caption">%s</div>' % _html.escape(caption or "")
+    all_js = json.dumps(MERMAID_LOCAL_JS + MERMAID_CDN_JS, ensure_ascii=False)
     return (
         _DIAGRAM_HTML_TEMPLATE
         .replace("__UID__", uid)
         .replace("__CAPTION__", caption_html)
-        .replace("__LOCAL__", MERMAID_LOCAL)
-        .replace("__CDN__", MERMAID_CDN)
+        .replace("__ALL_JS__", all_js)
         .replace("__PAYLOAD__", payload)
         .replace("__CODE__", _html.escape(code))
+        .replace("__TEXT__", _html.escape(code))
     )

@@ -49,6 +49,21 @@ def _is_question(text: str) -> bool:
     return False
 
 
+def _draw_topic(text: str) -> str | None:
+    """解析「画图/图/diagram」命令；不是画图命令则返回 None。"""
+    t = (text or "").strip()
+    patterns = (
+        r"^画图[:：]?\s*(.*)$",
+        r"^diagram[:：]?\s*(.*)$",
+        r"^图[:：]\s*(.+)$",
+    )
+    for pat in patterns:
+        m = re.match(pat, t, re.I)
+        if m:
+            return m.group(1).strip()
+    return None
+
+
 _SECTION_LABELS = (
     "目标", "读这里", "讲解要点", "动手任务",
     "苏格拉底自检", "合格回答应包含", "解锁条件",
@@ -545,6 +560,7 @@ class WebTutor:
         self.attempts = 0          # 当前阶段已尝试次数
         self.history: list[tuple[str, str]] = []
         self.follow = ""           # 当前待回答的追问
+        self.pending_diagram = ""  # 「画图：主题」按需生成的局部图（优先于步骤自带配图）
         self._out: list[str] = []
 
     # ---------- 输出缓冲 ----------
@@ -594,7 +610,9 @@ class WebTutor:
         return "\n".join(lines)
 
     def current_diagram(self) -> str:
-        """当前步骤的可选配图（Mermaid 代码），无图则返回空串。"""
+        """当前要展示的配图（按需图优先，其次步骤自带图），无图返回空串。"""
+        if self.pending_diagram:
+            return self.pending_diagram
         if 0 <= self.idx < len(self.steps):
             return self.steps[self.idx].diagram
         return ""
@@ -614,6 +632,7 @@ class WebTutor:
 
     # ---------- 步骤状态机 ----------
     def _enter_step(self) -> None:
+        self.pending_diagram = ""
         step = self.steps[self.idx]
         parts = [f"### 第 {self.idx + 1}/{len(self.steps)} 步｜{step.title}"]
         if step.objective:
@@ -674,6 +693,7 @@ class WebTutor:
             self._enter_graduation()
 
     def _enter_graduation(self) -> None:
+        self.pending_diagram = ""
         self._emit("🏁 **进入毕业关卡（可选）**——目标：能给别人讲清楚这个项目。")
         if self.tail:
             self._emit(self.tail)
@@ -682,6 +702,50 @@ class WebTutor:
         self.history = []
         self._emit("二选一：① 完成「改出来」后回来汇报（改了什么/结果/为什么）；"
                    "② 把 3 分钟讲解稿贴在 `讲：` 后面。都不想做就输入 `跳过` 结束。")
+
+    def _draw_diagram(self, topic: str) -> None:
+        """「画图：主题」：按需生成当前步骤的局部图（flowchart/时序），不推进、不消耗自检。"""
+        from .diagram import extract_mermaid_block, looks_valid_mermaid
+
+        step = self.steps[self.idx]
+        lines = [f"# 学习步骤上下文（第 {self.idx + 1}/{len(self.steps)} 步｜{step.title}）"]
+        if step.objective:
+            lines.append(f"目标：{step.objective}")
+        if step.read_lines:
+            lines.append("读这里：")
+            lines += [f"- {r}" for r in step.read_lines]
+        if step.hints:
+            lines.append("边读边想：")
+            lines += [f"- {h}" for h in step.hints[:4]]
+        base_context = "\n".join(lines)
+        user = (
+            f"{base_context}\n\n想画的主题：{topic}\n"
+            "请画一张局部小图帮新手理解这一步（flowchart TD 或 sequenceDiagram，节点/消息不超过 8 个）。"
+            "内容只能来自上面「读这里/边读边想」里真实出现的文件、组件或函数；"
+            "flowchart 标签用双引号包裹，禁止出现 [ ] { } ( ) # \" 等字符；"
+            "sequenceDiagram 参与者命名要短。只输出一个合法的 ```mermaid 代码块。"
+        )
+        system = "你是带读导师的图解助手。只输出一个合法的 ```mermaid 代码块，禁止任何解释或额外文字。"
+        why = ""
+        for _ in range(2):
+            content = self.llm.direct(system, user, temperature=0.2, max_tokens=2048)
+            code = extract_mermaid_block(content) or content.strip()
+            ok, why = looks_valid_mermaid(code, allow_sequence=True)
+            if ok:
+                self.pending_diagram = code
+                self._emit(
+                    f"📊 **已按需配图**：主题「{topic}」的小图见上方配图区。"
+                    "读图时对照「读这里」的行号理解；可继续 `go` 或 `问：…` 追问。"
+                )
+                return
+            user = (
+                f"你上次输出的 Mermaid 不合格：{why}。请只输出一个合法 ```mermaid 代码块，不要解释。"
+                f"\n\n{base_context}\n\n想画的主题：{topic}"
+            )
+        self._emit(
+            f"❌ 按需配图失败：模型两次输出都不符合 Mermaid 结构（{why}）。"
+            "可稍后再试，或继续用文字提问。"
+        )
 
     # ---------- 逐轮响应 ----------
     def respond(self, text: str) -> list[str]:
@@ -710,6 +774,13 @@ class WebTutor:
             return self._flush()
         if self.phase == "grad" and re.match(r"^讲[:：]\s*", text):
             self._answer_grad_talk(re.sub(r"^讲[:：]\s*", "", text))
+            return self._flush()
+        topic = _draw_topic(text)
+        if topic is not None:
+            if self.phase not in ("read", "quiz", "task", "grad") or not (0 <= self.idx < len(self.steps)):
+                self._emit("请先点「开始带读」进入某一步后，再用 `画图：主题` 要一张局部小图。")
+                return self._flush()
+            self._draw_diagram(topic or self.steps[self.idx].title)
             return self._flush()
         if _is_question(text):
             self._answer_free_question(text)

@@ -9,3 +9,4 @@ dist/
 build/
 evals/.cache/
 learn-*.md
+web/mermaid.min.js

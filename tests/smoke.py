@@ -194,8 +194,12 @@ def main() -> int:
         """离线的 LLM 替身：判定一律通过，答疑直接返回（不真实调模型）。"""
         def __init__(self):
             self.judged = 0
+            self.drawn = 0
             self.answers = []
         def direct(self, system, user, temperature=0.2, max_tokens=800):
+            if "mermaid" in (system or "").lower() or "想画的主题" in (user or ""):
+                self.drawn += 1
+                return "```mermaid\nsequenceDiagram\n  用户->>app: 请求\n  app->>core: 处理\n```"
             self.judged += 1
             return '{"mastered": true, "comment": "回答到位", "follow_up": ""}'
         def chat(self, message):
@@ -219,6 +223,14 @@ def main() -> int:
     replies = wt.respond("这个项目是怎么跑起来的？")
     if not fake.answers or wt.phase != "read" or not any("答疑：" in m for m in replies):
         print("[❌] 阅读阶段自由提问未答疑")
+        failed += 1
+    # 画图命令：按需局部图（不推进、不消耗自检判定）
+    replies = wt.respond("画图：请求是怎么路由到核心模块的？")
+    if fake.drawn != 1 or wt.phase != "read" or "sequenceDiagram" not in wt.current_diagram():
+        print("[❌] 画图命令未生成按需局部图")
+        failed += 1
+    if not any("已按需配图" in m for m in replies):
+        print("[❌] 画图后应提示已按需配图")
         failed += 1
     # 进入自检后提问：答疑并回到原题，不消耗判定次数
     fake.answers.clear()
@@ -275,9 +287,14 @@ def main() -> int:
     if ok_bad:
         print("[❌] Mermaid 预检应拒绝缺少 flowchart 声明的内容")
         failed += 1
+    ok_seq, why_seq = looks_valid_mermaid("sequenceDiagram\n  A->>B: hi", allow_sequence=True)
+    ok_seq_bad, _ = looks_valid_mermaid("sequenceDiagram\n  A->>B: hi", allow_sequence=False)
+    if not ok_seq or ok_seq_bad:
+        print("[❌] sequenceDiagram 预检应仅在 allow_sequence 时通过")
+        failed += 1
 
     html_out = mermaid_html(code or "", caption="测试仓库 · 总体架构图")
-    for expected in ("cn-diagram", "mermaid", "flowchart TD"):
+    for expected in ("cn-diagram", "mermaid", "flowchart TD", "复制源码", "mermaid.live"):
         if expected not in html_out:
             print(f"[❌] mermaid_html 输出缺少关键内容：{expected}")
             failed += 1
