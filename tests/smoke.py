@@ -365,6 +365,7 @@ def main() -> int:
     from src.agent import (
         CodebaseNavigator,
         _ask_final_check,
+        _is_blank_answer,
         _parse_ask_plan,
         _strip_head_noise,
     )
@@ -385,6 +386,9 @@ def main() -> int:
         failed += 1
     if _strip_head_noise("正常回答") != "正常回答":
         print("[❌] 无噪声时 _strip_head_noise 不应改动内容")
+        failed += 1
+    if not _is_blank_answer("") or not _is_blank_answer("（模型未返回内容）") or _is_blank_answer("这是一段正常的完整回答，超过十个字"):
+        print("[❌] 空内容识别应区分占位符与真实回答")
         failed += 1
 
     class _FakeChatResp:

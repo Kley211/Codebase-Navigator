@@ -122,6 +122,15 @@ def _strip_head_noise(content: str) -> str:
     return "\n".join(lines).strip() or (content or "")
 
 
+_EMPTY_PLACEHOLDER = "（模型未返回内容）"
+
+
+def _is_blank_answer(content: str) -> bool:
+    """判断模型是否几乎没有输出（空串/占位符/一句话都没有）。"""
+    text = _strip_head_noise(content or "").strip()
+    return not text or text == _EMPTY_PLACEHOLDER or len(text) < 10
+
+
 class CodebaseNavigator:
     """面向单个仓库的学习 Agent。"""
 
@@ -178,10 +187,17 @@ class CodebaseNavigator:
             return content
         for _ in range(1 + MAX_FINAL_RETRIES):
             messages.append({"role": "assistant", "content": content})
-            messages.append({"role": "system", "content": _CITE_REWRITE_SYS})
+            if _is_blank_answer(content):
+                messages.append({
+                    "role": "system",
+                    "content": "你刚才没有输出有效内容。请立即基于工具已返回的结果，用中文输出至少 3 句话的回答，"
+                    "可引用你读过的文件（`完整相对路径:行号`）。不要输出空内容。",
+                })
+            else:
+                messages.append({"role": "system", "content": _CITE_REWRITE_SYS})
             try:
                 response = self._complete(messages, temperature=0)
-                content = _strip_head_noise(response.choices[0].message.content or "（模型未返回内容）")
+                content = _strip_head_noise(response.choices[0].message.content or _EMPTY_PLACEHOLDER)
             except Exception:
                 break
             if final_check(content):
@@ -194,6 +210,7 @@ class CodebaseNavigator:
         messages = [self._system_message(), *self.conversation]
         self.last_tool_calls = []
         urged = False
+        budget_urged = False
         forced_final = False
         retries = 0
         text_tool_nudged = False
@@ -207,10 +224,23 @@ class CodebaseNavigator:
                     "content": "工具调用次数已达上限。请基于已收集的信息立即输出最终回答，不要再调用工具；不要复述本提示。",
                 })
                 response = self._complete(messages, temperature=0)
-                content = response.choices[0].message.content or "（模型未返回内容）"
+                content = response.choices[0].message.content or _EMPTY_PLACEHOLDER
                 content = self._rewrite_until_cited(content, messages, final_check)
                 self.conversation.append({"role": "assistant", "content": content})
                 return content
+
+            # 临近工具预算：先提醒模型收敛，避免打满后仍在读文件导致收尾困难
+            if (
+                tool_budget
+                and len(self.last_tool_calls) >= tool_budget - 5
+                and not budget_urged
+            ):
+                budget_urged = True
+                messages.append({
+                    "role": "system",
+                    "content": f"你已接近本问的工具预算（{len(self.last_tool_calls)}/{tool_budget}）。"
+                    "若核心问题已能回答，请立即输出最终回答；若还差关键文件，只读最关键的一个后收尾。",
+                })
 
             response = self._complete(messages, tools=get_tool_schemas(), temperature=0)
             message = response.choices[0].message
@@ -236,7 +266,7 @@ class CodebaseNavigator:
                     )
                 continue
 
-            content = message.content or "（模型未返回内容）"
+            content = message.content or _EMPTY_PLACEHOLDER
 
             # 检测到文本模拟工具调用：第一次提醒，第二次强制收尾
             if _FAKE_MARKER_RE.search(content):
@@ -254,7 +284,7 @@ class CodebaseNavigator:
                     "content": "请直接输出最终回答，不要再输出任何工具调用标签。",
                 })
                 response = self._complete(messages, temperature=0)
-                content = response.choices[0].message.content or "（模型未返回内容）"
+                content = response.choices[0].message.content or _EMPTY_PLACEHOLDER
                 content = _strip_head_noise(content)
                 self.conversation.append({"role": "assistant", "content": content})
                 return content
