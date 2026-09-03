@@ -111,7 +111,8 @@ def clone_repo(url: str, dest: Path | None = None, timeout: int = 300) -> Path:
 
 
 def load_repo(target: str) -> Path:
-    """加载仓库：URL → 克隆到本地缓存（可复用）；本地路径 → 直接使用。"""
+    """加载仓库：URL / owner-repo 简写 → 克隆到本地缓存（可复用）；本地路径 → 直接使用。"""
+    target = normalize_url(target)
     if is_url(target):
         return clone_repo(target)
     path = Path(target).expanduser().resolve()
