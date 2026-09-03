@@ -1,0 +1,58 @@
+# Agent 行为评测任务集（Ask 问答路径）
+# 每问 = 一次真实的 agent.chat() 调用；金标准 = 正确答案必须引用的文件 + 关键符号。
+# 指标：任务成功率（引用到金标文件且无幻觉引用）、金标文件是否被真实打开（read/import）、工具调用数。
+# 仓库 URL 从 evals/repos.yaml 按 name 匹配。
+
+tasks:
+  - repo: flask
+    questions:
+      - q: Flask 应用是怎么创建、注册路由并启动服务的？主调用链是怎样的？
+        gold_files:
+          - src/flask/app.py
+          - src/flask/cli.py
+        gold_terms: [Flask, add_url_rule, run]
+      - q: 一次 HTTP 请求进来后，Flask 内部是如何分发处理的（请求上下文怎么流转）？
+        gold_files:
+          - src/flask/app.py
+          - src/flask/ctx.py
+        gold_terms: [dispatch_request, RequestContext, push]
+      - q: URL 路由匹配是基于什么机制实现的？
+        gold_files:
+          - src/flask/routing.py
+        gold_terms: [Map, Rule, match]
+
+  - repo: requests
+    questions:
+      - q: 调用 requests.get() 后，请求从 API 层到真正发出去的完整调用链是什么？
+        gold_files:
+          - requests/api.py
+          - requests/sessions.py
+          - requests/adapters.py
+        gold_terms: [Session, request, send]
+      - q: Session 是怎么实现 cookie 保持和自动重试等行为的？
+        gold_files:
+          - requests/sessions.py
+          - requests/cookies.py
+        gold_terms: [cookies, merge_cookies, redirect]
+      - q: 响应体内容（文本/JSON/流）是如何在 Response 里解码和暴露的？
+        gold_files:
+          - requests/models.py
+        gold_terms: [Response, encoding, json]
+
+  - repo: gin
+    questions:
+      - q: gin 的路由是如何注册到 Engine 并完成匹配分发的？
+        gold_files:
+          - gin.go
+          - routergroup.go
+          - tree.go
+        gold_terms: [Handle, addRoute, Engine]
+      - q: 中间件（Middleware）是如何串联并在请求时依次执行的？
+        gold_files:
+          - gin.go
+          - context.go
+        gold_terms: [Use, Next, handlers]
+      - q: gin.Context 在一次请求中承担哪些职责？
+        gold_files:
+          - context.go
+        gold_terms: [Context, Params, JSON]
