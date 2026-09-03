@@ -25,6 +25,7 @@ from src.repo import load_repo
 from src.report import generate_report
 from src.progress import ProgressStore
 from src.tutor import WebTutor
+from src.diagram import mermaid_html, module_map_mermaid
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -215,6 +216,34 @@ def ai_overview() -> tuple[str, str]:
         return f"❌ 生成失败：{e}", ""
 
 
+_DIAGRAM_IDLE = (
+    '<div class="cn-diagram-note">把「AI 概览」变成一张可读的架构地图：'
+    "点「生成架构总览图」（Mermaid 渲染，需 API Key；失败会自动降级为目录结构静态地图）。</div>"
+)
+
+
+def _diagram_reset() -> str:
+    """切换仓库后清空上一仓库的架构图。"""
+    return _DIAGRAM_IDLE
+
+
+def architecture_diagram() -> str:
+    """生成「总体架构图」：AI 语义分层 → Mermaid；失败时降级为静态模块地图。"""
+    if not state["agent"] or not state["repo_path"]:
+        return '<div class="cn-diagram-note">请先加载仓库（架构总览图是 AI 功能，需要 API Key）。</div>'
+    repo_name = Path(state["repo_path"]).name
+    try:
+        code = state["agent"].get_architecture_diagram()
+        return mermaid_html(code, caption=f"{repo_name} · 总体架构图（AI 分层 · 粗箭头 = 主学习路径）")
+    except Exception as e:
+        try:
+            code = module_map_mermaid(str(state["repo_path"]))
+            note = f"⚠️ AI 架构图生成失败（{e}）→ 已降级为<b>目录结构静态地图</b>（不含 AI 语义分层）。"
+            return mermaid_html(code, caption=f"{repo_name} · {note}")
+        except Exception as e2:
+            return f'<div class="cn-diagram-note">❌ 架构图生成失败：{e2}</div>'
+
+
 def chat(message: str, history: list) -> tuple[list, str]:
     """边读边问。"""
     if not message.strip():
@@ -320,6 +349,8 @@ def build_app() -> gr.Blocks:
             with gr.Tab("02 · AI 概览"):
                 overview_btn = gr.Button("生成 AI 概览", variant="primary", elem_id="overview-btn")
                 overview_out = gr.Markdown(elem_id="overview-out")
+                diagram_btn = gr.Button("生成架构总览图", variant="secondary", elem_id="diagram-btn")
+                diagram_html = gr.HTML(_DIAGRAM_IDLE, elem_id="diagram-out")
                 with gr.Accordion("工具调用轨迹", open=False):
                     trace_out = gr.Markdown(elem_id="trace-out")
 
@@ -380,8 +411,10 @@ def build_app() -> gr.Blocks:
         gr.HTML(_FOOTER_HTML, elem_id="cn-footer")
 
         load_btn.click(initialize, [repo_input, provider, model, api_key], status)
+        load_btn.click(_diagram_reset, None, diagram_html)
         report_btn.click(static_report, None, report_out)
         overview_btn.click(ai_overview, None, [overview_out, trace_out])
+        diagram_btn.click(architecture_diagram, None, diagram_html)
         chat_btn.click(chat, [chat_input, chatbot], [chatbot, chat_input])
         chat_input.submit(chat, [chat_input, chatbot], [chatbot, chat_input])
         load_btn.click(progress_refresh, None, [progress_group, progress_label])

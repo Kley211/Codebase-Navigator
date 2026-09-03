@@ -26,6 +26,7 @@ from .prompts import (
     OVERVIEW_PROMPT,
     DEEP_DIVE_PROMPT,
     LEARN_PLAN_PROMPT,
+    ARCH_DIAGRAM_PROMPT,
 )
 from .tools import call_tool, get_tool_schemas
 
@@ -270,6 +271,34 @@ class CodebaseNavigator:
             max_tokens=max_tokens,
         )
         return response.choices[0].message.content or ""
+
+    def get_architecture_diagram(self) -> str:
+        """生成「总体架构图」：静态事实 + 一次 LLM 输出 Mermaid，不合格自动重写一次。
+
+        图数据先来自代码事实（模块 / 入口 / README），LLM 只做语义分层与主链路标注，
+        避免凭空画错拓扑；返回值仅含 Mermaid 代码，由前端负责渲染与降级。
+        """
+        from .diagram import architecture_facts, extract_mermaid_block, looks_valid_mermaid
+
+        context = architecture_facts(self.repo_path)
+        user = ARCH_DIAGRAM_PROMPT.format(repo_name=Path(self.repo_path).name, context=context)
+        system = "你是代码库架构图解师。只输出 ```mermaid 代码块，禁止输出任何其他文字或解释。"
+
+        content = self.direct(system, user, temperature=0.2, max_tokens=4096)
+        code = extract_mermaid_block(content) or content.strip()
+        ok, why = looks_valid_mermaid(code)
+        if not ok:
+            retry = (
+                f"你上次输出的 Mermaid 不合格：{why}。"
+                "请严格按原要求重试：只输出一个合法的 ```mermaid 代码块，禁止任何其他文字。\n\n"
+                f"{user}"
+            )
+            content = self.direct(system, retry, temperature=0.2, max_tokens=4096)
+            code = extract_mermaid_block(content) or content.strip()
+            ok, why = looks_valid_mermaid(code)
+            if not ok:
+                raise ValueError(f"模型多次输出不符合 Mermaid 结构：{why}")
+        return code
 
     def chat(self, message: str) -> str:
         """自由对话。"""

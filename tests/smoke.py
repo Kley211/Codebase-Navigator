@@ -20,6 +20,13 @@ from src.context import build_overview_context, _is_large, _module_layout
 from src.progress import MILESTONES, ProgressStore
 from src.learn import validate_learn_plan
 from src.tutor import parse_plan, WebTutor, _is_question
+from src.diagram import (
+    architecture_facts,
+    extract_mermaid_block,
+    looks_valid_mermaid,
+    mermaid_html,
+    module_map_mermaid,
+)
 
 
 def make_fake_repo() -> Path:
@@ -227,14 +234,44 @@ def main() -> int:
         print("[❌] 自由提问识别规则异常")
         failed += 1
 
+    # 图渲染抽象（离线，无 LLM）：静态模块地图 + Mermaid 提取/预检 + HTML 封装
+    mm = module_map_mermaid(str(large_repo))
+    if not mm.startswith("flowchart TD") or "core/" not in mm or "api/" not in mm:
+        print(f"[❌] 静态模块地图应包含 core/api 模块：\n{mm}")
+        failed += 1
+
+    facts = architecture_facts(str(repo))
+    for expected in ("# 仓库", "app.py", "入口点"):
+        if expected not in facts:
+            print(f"[❌] 架构素材缺少关键内容：{expected}")
+            failed += 1
+
+    sample = "前言\n```mermaid\nflowchart TD\n  A[\"入口\"] ==> B[\"核心\"]\n```\n"
+    code = extract_mermaid_block(sample)
+    ok, why = looks_valid_mermaid(code or "")
+    if not ok:
+        print(f"[❌] Mermaid 提取/预检失败：{why}")
+        failed += 1
+    ok_bad, _ = looks_valid_mermaid("A --> B")
+    if ok_bad:
+        print("[❌] Mermaid 预检应拒绝缺少 flowchart 声明的内容")
+        failed += 1
+
+    html_out = mermaid_html(code or "", caption="测试仓库 · 总体架构图")
+    for expected in ("cn-diagram", "mermaid", "flowchart TD"):
+        if expected not in html_out:
+            print(f"[❌] mermaid_html 输出缺少关键内容：{expected}")
+            failed += 1
+
     if failed == 0:
         print("[✅] 静态报告")
         print("[✅] 带读剧本结构校验")
         print("[✅] 带读剧本解析")
         print("[✅] RoadMap / 自由提问 / 动手可选")
+        print("[✅] 架构图渲染抽象")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 4 - failed}/{len(checks) + 4} 通过")
+    print(f"\n结果：{len(checks) + 5 - failed}/{len(checks) + 5} 通过")
     return 0 if failed == 0 else 1
 
 
