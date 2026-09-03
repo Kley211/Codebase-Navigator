@@ -18,6 +18,7 @@ from src.report import generate_report
 from src.tools import call_tool
 from src.context import build_overview_context, _is_large, _module_layout
 from src.progress import MILESTONES, ProgressStore
+from src.learn import validate_learn_plan
 
 
 def make_fake_repo() -> Path:
@@ -51,6 +52,29 @@ def make_large_fake_repo() -> Path:
                 f"def fn{i}():\n    return {i}\n", encoding="utf-8"
             )
     return tmp
+
+
+def make_good_learn_plan() -> str:
+    """构造一份结构合格的最小带读剧本（供离线校验使用）。"""
+    step_tpl = """### 第 {n} 步：占位步骤标题
+**目标**：这一步完成后你能用自己的话复述并讲清楚。
+**读这里**：
+- `app.py:{a}-{b}` —— 为什么读这段（一句话）
+- `src/core.py:{c}-{d}` —— 为什么读这段（一句话）
+**讲解要点**：为什么这里要这样写？如果不这样做会怎样？
+**动手任务**：改 `app.py` 第 {a} 行附近的一个小改动，运行并观察效果。
+**苏格拉底自检**：
+- 问题 1：你能用自己的话解释刚才读的这段在做什么吗？为什么？
+- 问题 2：如果去掉这个判断/分支，会发生什么？
+**合格回答应包含**：1. 说清这段的职责；2. 说清它和调用方的关系。
+**解锁条件**：复述覆盖要点 + 动手实验跑通。
+
+"""
+    parts = ["# 示例仓库带读剧本", "## 剧本总览\n值得学什么；学完你能做到什么。\n"]
+    for i in range(5):
+        parts.append(step_tpl.format(n=i + 1, a=1 + i * 3, b=10 + i * 3, c=20 + i, d=30 + i))
+    parts.append("## 剧末验收（毕业关卡）\n- **讲出来**：给别人讲 3 分钟提纲\n- **改出来**：综合改动任务\n")
+    return "\n".join(parts)
 
 
 def main() -> int:
@@ -125,11 +149,22 @@ def main() -> int:
         print("[❌] 学习进度重置失败")
         failed += 1
 
+    # 带读剧本结构校验（离线，不调 LLM）
+    ok, problems = validate_learn_plan(make_good_learn_plan())
+    if not ok:
+        print(f"[❌] 带读剧本结构校验：{problems}")
+        failed += 1
+    ok_bad, _ = validate_learn_plan("# 空剧本\n没有任何步骤")
+    if ok_bad:
+        print("[❌] 带读剧本应拒绝没有步骤的内容")
+        failed += 1
+
     if failed == 0:
         print("[✅] 静态报告")
+        print("[✅] 带读剧本结构校验")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 1 - failed}/{len(checks) + 1} 通过")
+    print(f"\n结果：{len(checks) + 2 - failed}/{len(checks) + 2} 通过")
     return 0 if failed == 0 else 1
 
 

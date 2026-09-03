@@ -9,6 +9,7 @@
 - **默认免费模型**：OpenRouter 的 `z-ai/glm-5.2:free`（0 费用），也可切回 DeepSeek / Groq / OpenAI / 任意 OpenAI 兼容服务
 - **自动降级**：免费模型共享池限流（429/过载）时自动切换到备用免费模型（`minimax/minimax-m3:free` 等），成功后记住当前模型
 - **CLI 优先**：一份 Markdown 报告即交付物，方便导出、分享、写进简历
+- **带读剧本（Learn Plan）**：面向「会装环境但没读过开源源码」的新手，把仓库转成 5-8 步可执行计划——每步含目标 / 精读段落 / 动手任务 / 苏格拉底式自检，验收标准是「能复述 + 能改 + 能讲」
 - **评测驱动**：内置 10 个 GitHub Trending 热门仓库评测集，质量可量化
 
 ## 快速开始
@@ -32,11 +33,24 @@ python cli.py https://github.com/psf/requests --overview
 # 5. 追问具体问题
 python cli.py https://github.com/psf/requests --ask "认证是如何实现的？"
 
-# 6. 保存报告
+# 6. 生成「带读剧本」（需要 API Key，自动存为 learn-requests.md）
+python cli.py https://github.com/psf/requests --learn
+
+# 7. 保存报告
 python cli.py https://github.com/psf/requests --report --output report.md
 ```
 
 也支持本地路径：`python cli.py E:\some\repo --report`。
+
+### 带读剧本（--learn）
+
+面向**会自己建虚拟环境、装依赖、能跑通项目、会看报错，但没系统读过开源项目源码**的开发者。
+每次生成一份 Markdown 剧本：5-8 个步骤，从「跑起来」开始，经核心链路精读到综合改造；
+每一步都包含「读哪里（精确到 行号区间）/ 讲解要点 / 动手任务 / 苏格拉底式自检」，以及判定
+「真的懂了」的回答要点（验收 = 能复述 + 能改 + 能讲）。
+
+> 注意：URL 仓库会被克隆到临时目录用于分析，动手实验请在你自己的工作副本进行
+> （`git clone <repo>` 一份）。
 
 ## Web 界面（Phase 3）
 

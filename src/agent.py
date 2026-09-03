@@ -20,7 +20,13 @@ from openai import APIError, APIConnectionError, APITimeoutError, OpenAI, RateLi
 
 from .config import LLMConfig
 from .context import build_overview_context
-from .prompts import SINGLE_SHOT_PROMPT, SYSTEM_PROMPT, OVERVIEW_PROMPT, DEEP_DIVE_PROMPT
+from .prompts import (
+    SINGLE_SHOT_PROMPT,
+    SYSTEM_PROMPT,
+    OVERVIEW_PROMPT,
+    DEEP_DIVE_PROMPT,
+    LEARN_PLAN_PROMPT,
+)
 from .tools import call_tool, get_tool_schemas
 
 MAX_TOOL_ROUNDS = 35        # 最大 API 往返轮数
@@ -219,6 +225,39 @@ class CodebaseNavigator:
     def ask(self, question: str) -> str:
         """针对代码库提问。"""
         return self._run(DEEP_DIVE_PROMPT.format(question=question))
+
+    def get_learn_plan(self) -> str:
+        """生成「带读剧本」：把仓库转成 5-8 步、可自检的学习计划。
+
+        与概览一致采用「静态上下文 + 一次 LLM 调用」，避免大仓库下
+        多轮工具调用失控；结构不合格时自动让模型重写（最多重试 2 次）。
+        """
+        from .learn import validate_learn_plan, retry_hint
+
+        context = build_overview_context(self.repo_path)
+        prompt = LEARN_PLAN_PROMPT.format(
+            repo_name=Path(self.repo_path).name, context=context
+        )
+        self.last_tool_calls = []
+        self.conversation.append({"role": "user", "content": prompt})
+        messages = [
+            {"role": "system", "content": "你是代码库学习导师。直接输出完整剧本，不要输出思考过程。"},
+            *self.conversation,
+        ]
+        content = ""
+        for _ in range(1 + MAX_FINAL_RETRIES):
+            response = self._complete(messages, temperature=0, max_tokens=8192)
+            content = response.choices[0].message.content or "（模型未返回内容）"
+            ok, problems = validate_learn_plan(content)
+            if ok:
+                self.conversation.append({"role": "assistant", "content": content})
+                return content
+            messages.append({
+                "role": "system",
+                "content": retry_hint(problems),
+            })
+        self.conversation.append({"role": "assistant", "content": content})
+        return content
 
     def chat(self, message: str) -> str:
         """自由对话。"""
