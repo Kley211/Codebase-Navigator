@@ -21,7 +21,7 @@ import gradio as gr
 
 from src.agent import CodebaseNavigator
 from src.config import PROVIDERS, resolve_config
-from src.repo import load_repo
+from src.repo import REPO_CACHE_ROOT, load_repo
 from src.report import generate_report
 from src.progress import ProgressStore
 from src.tutor import WebTutor
@@ -33,7 +33,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # 全局状态：当前加载的仓库与 Agent
-state = {"repo_path": None, "agent": None, "tutor": None, "tutor_plan": None}
+state = {"repo_path": None, "agent": None, "tutor": None, "tutor_plan": None, "config_error": None}
 progress_store = ProgressStore()
 _WEB_DIR = Path(__file__).resolve().parent / "web"
 
@@ -77,7 +77,7 @@ MODEL_OPTIONS = {
 
 
 def _cleanup_old_repo():
-    """清理上一次加载的临时克隆目录。"""
+    """清理上一次加载的状态（临时克隆目录会删除；本地缓存仓库保留供复用）。"""
     old = state["repo_path"]
     if old and str(old).startswith(tempfile.gettempdir()) and "codebase-nav-" in str(old):
         shutil.rmtree(old, ignore_errors=True)
@@ -85,28 +85,60 @@ def _cleanup_old_repo():
     state["agent"] = None
     state["tutor"] = None
     state["tutor_plan"] = None
+    state["config_error"] = None
 
 
 def initialize(repo_input: str, provider: str, model: str, api_key: str) -> str:
-    """加载仓库并初始化 Agent。"""
+    """加载仓库并尽量初始化 Agent。
+
+    仓库本身总能加载（静态报告 / 学习清单不需要 API Key）；
+    只有 AI 配置失败时才进入「静态模式」，并给出启用 AI 的引导。
+    """
     if not repo_input or not repo_input.strip():
         return "❌ 请输入 GitHub URL 或本地路径。"
+    try:
+        _cleanup_old_repo()
+        repo_path = load_repo(repo_input.strip())
+        state["repo_path"] = repo_path
+    except Exception as e:
+        return f"❌ 加载失败：{e}\n\n提示：GitHub 不稳定时可换镜像或使用本地路径；静态报告不需要任何 AI 配置。"
+    cache_hint = ""
+    if str(repo_path).startswith(str(REPO_CACHE_ROOT)):
+        cache_hint = "\n\n（已复用本地仓库缓存，无需再次联网克隆）"
+    state["agent"] = None
+    state["config_error"] = None
     try:
         config = resolve_config(
             provider=provider, model=model.strip() or None, api_key=api_key.strip() or None
         )
-        _cleanup_old_repo()
-        repo_path = load_repo(repo_input.strip())
-        agent = CodebaseNavigator(str(repo_path), config)
-        state["repo_path"] = repo_path
-        state["agent"] = agent
+        state["agent"] = CodebaseNavigator(str(repo_path), config)
         return (
-            f"✅ 已加载仓库 **{repo_path.name}**\n\n"
-            f"模型：`{config.model}`\n\n"
-            f"现在可以：静态报告 → AI 概览 → 问答追问 → 学习进度 → **带读陪练**（Tab 05）。"
+            f"✅ 已加载仓库 **{repo_path.name}**（AI 就绪）{cache_hint}\n\n"
+            f"模型：`{config.model}`（{config.provider}）\n\n"
+            "现在可以：静态报告 → AI 概览 → 问答追问 → 学习进度 → **带读陪练**（Tab 05）。"
         )
     except Exception as e:
-        return f"❌ 加载失败：{e}"
+        state["config_error"] = str(e)
+        first = str(e).splitlines()[0]
+        return (
+            f"✅ 已加载仓库 **{repo_path.name}**（静态模式）{cache_hint}\n\n"
+            f"⚠️ AI 功能未启用：{first}\n\n"
+            "静态报告 / 学习清单可正常使用。要启用 AI：① 在顶部「API Key」填写后重新点「加载仓库」；"
+            "② 或在项目根目录 `.env` 配置 `OPENROUTER_API_KEY`（免费模型 `z-ai/glm-5.2:free`）后重启 `python app.py`。"
+            " 配置方法见 `.env.example`。"
+        )
+
+
+def _ai_unavailable_note() -> str:
+    """AI 功能不可用时的统一引导（区分未加载仓库 / 缺 API Key）。"""
+    if not state["repo_path"]:
+        return "请先在顶部加载仓库（GitHub URL 或本地路径）。静态报告不需要 API Key；AI 功能需要 API Key。"
+    reason = (state.get("config_error") or "模型配置未初始化").splitlines()[0]
+    return (
+        f"仓库已加载，但 AI 功能未启用：{reason}\n\n"
+        "启用方法：① 在顶部「API Key」填入后重新点「加载仓库」；"
+        "② 或在项目根目录 `.env` 配置 `OPENROUTER_API_KEY`（默认免费模型 `z-ai/glm-5.2:free`）后重启 Web。"
+    )
 
 
 def _progress_repo_key() -> str | None:
@@ -184,8 +216,13 @@ def _tutor_diagram_out() -> str:
 def _tutor_start(regen: bool) -> tuple[list, str, str, str]:
     """启动带读陪练：复用/生成剧本 → 输出 RoadMap 总览 + 开场引导。"""
     agent = state["agent"]
-    if not agent or not state["repo_path"]:
-        return [], "请先加载仓库（带读陪练是 AI 功能，需要 API Key）。", "", _TUTOR_DIAGRAM_IDLE
+    if not state["repo_path"]:
+        return [
+            {"role": "assistant", "content": "请先在顶部加载仓库（GitHub URL 或本地路径），再开始带读。"}
+        ], "未加载仓库", "", _TUTOR_DIAGRAM_IDLE
+    if not agent:
+        note = _ai_unavailable_note() + "\n\n带读陪练是 AI 功能；启用 AI 后重新点「开始带读」即可。"
+        return [{"role": "assistant", "content": note}], "AI 未启用", "", _TUTOR_DIAGRAM_IDLE
     try:
         plan_text = state["tutor_plan"]
         plan_path = _default_plan_path()
@@ -276,8 +313,10 @@ def static_report() -> str:
 
 def ai_overview() -> tuple[str, str]:
     """AI 概览 + 工具调用轨迹。"""
+    if not state["repo_path"]:
+        return "请先在顶部加载仓库（GitHub URL 或本地路径）。", ""
     if not state["agent"]:
-        return "请先加载仓库（AI 功能需要 API Key）。", ""
+        return _ai_unavailable_note(), ""
     try:
         text = state["agent"].get_overview()
         calls = state["agent"].get_last_tool_calls()
@@ -301,10 +340,28 @@ def _diagram_reset() -> str:
     return _DIAGRAM_IDLE
 
 
+def reset_content_on_load():
+    """切换仓库后清空上一仓库遗留的问答 / 报告 / 带读内容。"""
+    return (
+        [],                                       # chatbot
+        "",                                       # chat_note
+        "",                                       # report_out
+        "",                                       # overview_out
+        "",                                       # trace_out
+        [],                                       # tutor_chat
+        "（还没有路线图。点「开始带读」会先生成 RoadMap，再逐步带读。）",  # tutor_roadmap
+        "尚未开始。加载仓库后点「开始带读」。",      # tutor_summary
+        _TUTOR_DIAGRAM_IDLE,                       # tutor_diagram
+    )
+
+
 def architecture_diagram() -> str:
     """生成「总体架构图」：AI 语义分层 → Mermaid；失败时降级为静态模块地图。"""
-    if not state["agent"] or not state["repo_path"]:
-        return '<div class="cn-diagram-note">请先加载仓库（架构总览图是 AI 功能，需要 API Key）。</div>'
+    if not state["repo_path"]:
+        return '<div class="cn-diagram-note">请先加载仓库（GitHub URL 或本地路径）。</div>'
+    if not state["agent"]:
+        note = _ai_unavailable_note().replace("\n", "<br>")
+        return f'<div class="cn-diagram-note">{note}</div>'
     repo_name = Path(state["repo_path"]).name
     try:
         code = state["agent"].get_architecture_diagram()
@@ -340,8 +397,11 @@ def chat(message: str, history: list) -> tuple[list, str, str]:
     """边读边问：Ask 会先拆解计划再执行，下方展示计划与工具调用情况。"""
     if not message.strip():
         return history, "", ""
-    if not state["agent"]:
-        answer = "请先加载仓库（AI 功能需要 API Key）。"
+    if not state["repo_path"]:
+        answer = "请先在顶部加载仓库（GitHub URL 或本地路径）。"
+        plan_note = ""
+    elif not state["agent"]:
+        answer = _ai_unavailable_note()
         plan_note = ""
     else:
         try:
@@ -514,6 +574,12 @@ def build_app() -> gr.Blocks:
 
         load_btn.click(initialize, [repo_input, provider, model, api_key], status)
         load_btn.click(_diagram_reset, None, diagram_html)
+        load_btn.click(
+            reset_content_on_load,
+            None,
+            [chatbot, chat_note, report_out, overview_out, trace_out,
+             tutor_chat, tutor_roadmap, tutor_summary, tutor_diagram],
+        )
         report_btn.click(static_report, None, report_out)
         overview_btn.click(ai_overview, None, [overview_out, trace_out])
         diagram_btn.click(architecture_diagram, None, diagram_html)
