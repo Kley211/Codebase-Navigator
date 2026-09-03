@@ -46,7 +46,7 @@ python app.py
 # 打开 http://127.0.0.1:7860
 ```
 
-单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
+单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问 → 学习进度勾选清单。进度自动保存到本地 `~/.codebase-navigator/progress.json`。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
 
 ## MCP Server（供 Codex / Claude / Cursor 调用）
 

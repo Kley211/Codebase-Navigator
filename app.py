@@ -23,6 +23,7 @@ from src.agent import CodebaseNavigator
 from src.config import PROVIDERS, resolve_config
 from src.repo import load_repo
 from src.report import generate_report
+from src.progress import ProgressStore
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -30,6 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 # 全局状态：当前加载的仓库与 Agent
 state = {"repo_path": None, "agent": None}
+progress_store = ProgressStore()
 
 # 常用模型快捷选项
 MODEL_OPTIONS = {
@@ -65,10 +67,49 @@ def initialize(repo_input: str, provider: str, model: str, api_key: str) -> str:
         return (
             f"✅ 已加载仓库 **{repo_path.name}**\n\n"
             f"模型：`{config.model}`\n\n"
-            f"现在可以：生成静态报告 → AI 概览 → 在问答里追问。"
+            f"现在可以：静态报告 → AI 概览 → 问答追问 → 学习进度勾选清单。"
         )
     except Exception as e:
         return f"❌ 加载失败：{e}"
+
+
+def _progress_repo_key() -> str | None:
+    """当前仓库的学习进度 key（用仓库名）。"""
+    repo_path = state["repo_path"]
+    return Path(repo_path).name if repo_path else None
+
+
+def progress_refresh() -> tuple[list[str], str]:
+    """加载当前仓库的学习清单（首次自动生成默认清单）。"""
+    key = _progress_repo_key()
+    if not key or not state["repo_path"]:
+        return [], "请先加载仓库（GitHub URL 或本地路径）。"
+    progress_store.ensure(key, str(state["repo_path"]))
+    items = progress_store.items(key)
+    done = progress_store.done(key)
+    pct = int(len(done) / len(items) * 100) if items else 0
+    return done, f"「{key}」 已完成 {len(done)}/{len(items)} · {pct}%"
+
+
+def progress_toggle(done: list[str]) -> str:
+    """勾选/取消后保存进度。"""
+    key = _progress_repo_key()
+    if not key:
+        return "请先加载仓库。"
+    done = list(done or [])
+    progress_store.update(key, done)
+    items = progress_store.items(key)
+    pct = int(len(done) / len(items) * 100) if items else 0
+    return f"「{key}」 已完成 {len(done)}/{len(items)} · {pct}%"
+
+
+def progress_reset() -> tuple[list[str], str]:
+    """重置当前仓库的学习进度。"""
+    key = _progress_repo_key()
+    if not key:
+        return [], "请先加载仓库。"
+    progress_store.reset(key)
+    return [], f"已重置「{key}」的学习进度，重新开始！"
 
 
 def static_report() -> str:
@@ -170,6 +211,16 @@ def build_app() -> gr.Blocks:
                     )
                     chat_btn = gr.Button("发送", variant="primary", scale=1)
 
+            with gr.Tab("📈 学习进度"):
+                gr.Markdown(
+                    "勾选已完成的学习项，进度自动保存到本地 `~/.codebase-navigator/progress.json`，下次打开仍然保留。"
+                )
+                with gr.Row():
+                    progress_load_btn = gr.Button("📋 加载学习清单", variant="secondary")
+                    progress_reset_btn = gr.Button("↺ 重置进度", variant="stop")
+                progress_group = gr.CheckboxGroup(label="学习清单（点击勾选）", choices=[])
+                progress_label = gr.Label("加载仓库后点击「加载学习清单」。")
+
         gr.Markdown(
             """
             ---
@@ -188,6 +239,10 @@ def build_app() -> gr.Blocks:
         overview_btn.click(ai_overview, None, [overview_out, trace_out])
         chat_btn.click(chat, [chat_input, chatbot], [chatbot, chat_input])
         chat_input.submit(chat, [chat_input, chatbot], [chatbot, chat_input])
+        load_btn.click(progress_refresh, None, [progress_group, progress_label])
+        progress_load_btn.click(progress_refresh, None, [progress_group, progress_label])
+        progress_reset_btn.click(progress_reset, None, [progress_group, progress_label])
+        progress_group.select(progress_toggle, progress_group, progress_label)
 
     return app
 

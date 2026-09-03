@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.report import generate_report
 from src.tools import call_tool
 from src.context import build_overview_context, _is_large, _module_layout
+from src.progress import MILESTONES, ProgressStore
 
 
 def make_fake_repo() -> Path:
@@ -102,6 +103,27 @@ def main() -> int:
         if expected not in large_context:
             print(f"[❌] 大仓库分层上下文缺少：{expected}")
             failed += 1
+
+    # 学习进度存储：初始化 → 勾选 → 持久化 → 重置
+    progress_path = Path(tempfile.mkdtemp(prefix="nav-progress-")) / "progress.json"
+    pstore = ProgressStore(progress_path)
+    pstore.ensure("demo", str(repo))
+    items = pstore.items("demo")
+    for milestone in MILESTONES:
+        if milestone not in items:
+            print(f"[❌] 学习清单缺少里程碑：{milestone}")
+            failed += 1
+    if len(items) <= len(MILESTONES):
+        print(f"[❌] 学习清单应包含关键文件项：{items}")
+        failed += 1
+    pstore.update("demo", items[:2])
+    if ProgressStore(progress_path).done("demo") != items[:2]:
+        print("[❌] 学习进度未持久化")
+        failed += 1
+    pstore.reset("demo")
+    if ProgressStore(progress_path).done("demo"):
+        print("[❌] 学习进度重置失败")
+        failed += 1
 
     if failed == 0:
         print("[✅] 静态报告")
