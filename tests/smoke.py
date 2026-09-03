@@ -362,7 +362,12 @@ def main() -> int:
 
     # Ask 规划拆分：先拆解计划再执行；计划进 metadata、不进最终回答正文
     from types import SimpleNamespace
-    from src.agent import CodebaseNavigator, _parse_ask_plan
+    from src.agent import (
+        CodebaseNavigator,
+        _ask_final_check,
+        _parse_ask_plan,
+        _strip_head_noise,
+    )
     from src.config import LLMConfig
 
     plan_steps = _parse_ask_plan("1. read_file app.py —— 看入口\n- 第二步\n3. done")
@@ -371,6 +376,15 @@ def main() -> int:
         failed += 1
     if _parse_ask_plan("前言\n1. a\n2. b\n后记") != ["a", "b"] or _parse_ask_plan("") != []:
         print("[❌] Ask 计划解析应忽略非步骤文本")
+        failed += 1
+    cleaned = _strip_head_noise(
+        "工具调用次数已达上限。请基于已收集的信息立即输出最终回答。\n结论：入口在 src/app.py:12。"
+    )
+    if not cleaned.startswith("结论"):
+        print("[❌] 强制收尾提示被复述进回答时应清理头部噪声")
+        failed += 1
+    if _strip_head_noise("正常回答") != "正常回答":
+        print("[❌] 无噪声时 _strip_head_noise 不应改动内容")
         failed += 1
 
     class _FakeChatResp:
@@ -392,8 +406,8 @@ def main() -> int:
         joined = "\n".join(_msg_text(m) for m in messages)
         ag_state["plan_injected"] = "调研计划" in joined and "read_file app.py" in joined
         return _FakeChatResp(
-            "结论：入口定义在 app.py:1，主流程在 app.py:2。\n\n"
-            "两者先完成初始化再进入请求循环；若需要更多细节可以继续追问。"
+            "结论：入口定义在 app.py:1，主流程在 app.py:2；初始化依赖注入发生在 app.py:3，"
+            "路由分发与请求处理在 app.py:4。先完成初始化再进入请求循环；若需要更多细节可以继续追问。"
         )
 
     ag_plan._complete = _fake_ask_complete
@@ -409,6 +423,22 @@ def main() -> int:
         failed += 1
     if ag_plan.get_last_plan() != ag_plan.last_plan:
         print("[❌] get_last_plan 应返回本轮拆解计划")
+        failed += 1
+
+    # 引用闸门兜底：多次不合格后应强制无工具重写而不是直接放行或死循环
+    ag_gate = CodebaseNavigator(str(repo), LLMConfig("openrouter", "test-key", "https://example.invalid", "m"))
+    ag_gate_state = {"calls": 0, "no_tool_final": 0}
+
+    def _gate_complete(messages, **kwargs):
+        ag_gate_state["calls"] += 1
+        if "tools" not in kwargs:
+            ag_gate_state["no_tool_final"] += 1
+        return _FakeChatResp("这段逻辑比较简单，位置在 src/app.py:5。")
+
+    ag_gate._complete = _gate_complete
+    gate_out = ag_gate._run("这个项目入口在哪？", final_check=_ask_final_check)
+    if ag_gate_state["no_tool_final"] < 1 or ag_gate_state["calls"] < 4 or not gate_out:
+        print("[❌] 引用闸门应在多次不合格后走无工具强制重写兜底（至多重试几次）")
         failed += 1
 
     # 图渲染抽象（离线，无 LLM）：静态模块地图 + Mermaid 提取/预检 + HTML 封装
