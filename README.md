@@ -7,6 +7,7 @@
 - **静态分析引擎（无需 API Key）**：目录结构、入口点、依赖、imports、文件热度，秒级输出
 - **AI 学习报告**：Overview / 模块地图 / Key Files / Roadmap，每条结论带 `file:line` 引用（反幻觉）
 - **默认免费模型**：OpenRouter 的 `z-ai/glm-5.2:free`（0 费用），也可切回 DeepSeek / Groq / OpenAI / 任意 OpenAI 兼容服务
+- **自动降级**：免费模型共享池限流（429/过载）时自动切换到备用免费模型（`minimax/minimax-m3:free` 等），成功后记住当前模型
 - **CLI 优先**：一份 Markdown 报告即交付物，方便导出、分享、写进简历
 - **评测驱动**：内置 10 个 GitHub Trending 热门仓库评测集，质量可量化
 

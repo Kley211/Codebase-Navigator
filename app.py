@@ -88,6 +88,7 @@ def ai_overview() -> tuple[str, str]:
         trace = "\n".join(
             f"{i + 1}. `{c['name']}` args={c['args']}" for i, c in enumerate(calls)
         ) or "（无工具调用）"
+        trace = f"**实际使用模型**：`{state['agent'].active_model}`\n\n{trace}"
         return text, trace
     except Exception as e:
         return f"❌ 生成失败：{e}", ""

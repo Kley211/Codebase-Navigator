@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -19,6 +19,11 @@ PROVIDERS = {
         "base_url": "https://openrouter.ai/api/v1",
         "env": "OPENROUTER_API_KEY",
         "model": "z-ai/glm-5.2:free",
+        # 免费模型共享池偶发限流：主模型 429/过载时按顺序自动降级
+        "fallback": [
+            "minimax/minimax-m3:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+        ],
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
@@ -39,6 +44,7 @@ class LLMConfig:
     api_key: str
     base_url: str
     model: str
+    fallback_models: list[str] = field(default_factory=list)
 
 
 def resolve_config(
@@ -64,6 +70,8 @@ def resolve_config(
         raise ValueError(f"未知提供商：{provider}，可选：{', '.join(PROVIDERS)}")
 
     info = PROVIDERS[provider]
+    chosen_model = model or info["model"]
+    fallback_models = [m for m in info.get("fallback", []) if m != chosen_model]
     key = api_key or os.getenv(info["env"])
     if not key:
         raise ValueError(
@@ -75,5 +83,6 @@ def resolve_config(
         provider=provider,
         api_key=key,
         base_url=info["base_url"],
-        model=model or info["model"],
+        model=chosen_model,
+        fallback_models=fallback_models,
     )

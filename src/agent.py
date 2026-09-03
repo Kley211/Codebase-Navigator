@@ -6,6 +6,7 @@
 - 每次工具调用都被记录，供界面展示"Agent 做了什么"
 - 三重收尾保障：工具预算上限强制无工具收尾、接近上限时提醒、最终回答质量校验（不合格要求重答）
 - 检测模型用文本模拟工具调用（不解析脆弱的伪 XML），提醒后仍不改正则强制收尾
+- 免费模型自动降级：主模型 429/过载时按备用链切换，成功后记住当前模型
 """
 
 from __future__ import annotations
@@ -34,8 +35,8 @@ _HEADING_RE = re.compile(r"^#{1,6}\s", re.M)
 # 模型用文本模拟工具调用的特征标记（格式五花八门，检测到即处理）
 _FAKE_MARKER_RE = re.compile(r"tool_calls|invoke name=|parameter name=|\uff5c")
 
-# 免费模型（如 OpenRouter 共享池）偶发限流/过载：指数退避重试
-_RETRY_DELAYS = (5, 10, 20, 40, 60)
+# 免费模型（如 OpenRouter 共享池）偶发限流/过载：多轮尝试 + 跨模型降级
+_PASS_DELAYS = (0, 8, 25)  # 每轮尝试前等待秒数（0 为立即）
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -66,18 +67,38 @@ class CodebaseNavigator:
         self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
         self.conversation: list[dict] = []
         self.last_tool_calls: list[dict] = []
+        # 模型降级链：主模型在前，备用模型在后；active_model 记录实际生效的模型
+        self.models = [config.model, *config.fallback_models]
+        self.active_model = config.model
 
     def _complete(self, messages: list[dict], **kwargs):
-        """带指数退避重试的补全调用：免费模型共享池偶发 429/5xx 时自动重试。"""
-        for delay in _RETRY_DELAYS + (0,):
-            try:
-                return self.client.chat.completions.create(
-                    model=self.config.model, messages=messages, **kwargs
-                )
-            except Exception as exc:
-                if not _is_retryable(exc) or not delay:
-                    raise
+        """带自动降级的补全调用。
+
+        免费模型共享池偶发 429/过载：从当前模型开始多轮尝试，
+        失败则切到下一个备用模型；成功后记住该模型避免反复试错。
+        """
+        start = self.models.index(self.active_model)
+        ordered = self.models[start:] + self.models[:start]
+        last_exc: Exception | None = None
+
+        for delay in _PASS_DELAYS:
+            if delay:
                 time.sleep(delay)
+            for model in ordered:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=model, messages=messages, **kwargs
+                    )
+                except Exception as exc:
+                    last_exc = exc
+                    if not _is_retryable(exc):
+                        raise
+                    continue
+                if model != self.active_model:
+                    self.active_model = model
+                return response
+
+        raise last_exc if last_exc is not None else RuntimeError("LLM 调用无响应")
 
     def _system_message(self) -> dict:
         return {"role": "system", "content": SYSTEM_PROMPT.format(repo_path=self.repo_path)}
