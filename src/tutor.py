@@ -549,7 +549,7 @@ class WebTutor:
         "idle": "未开始",
     }
 
-    def __init__(self, llm, plan_text: str):
+    def __init__(self, llm, plan_text: str, repo_key: str = "", memory_file=None):
         steps, tail = parse_plan(plan_text)
         self.llm = llm
         self.steps = steps
@@ -561,6 +561,20 @@ class WebTutor:
         self.history: list[tuple[str, str]] = []
         self.follow = ""           # 当前待回答的追问
         self.pending_diagram = ""  # 「画图：主题」按需生成的局部图（优先于步骤自带配图）
+        self.step_weak = False     # 当前步骤是否有自检要点被追问多次才覆盖
+        self.repo_key = repo_key
+        self.memory_file = memory_file
+        self._memory_data: dict | None = None
+        self.memory: dict | None = None   # 与当前剧本标题一致时才有值（断点/薄弱点记忆）
+        if repo_key:
+            from . import tutor_memory as tm
+
+            if self.memory_file is None:
+                self.memory_file = tm.default_path()
+            self._memory_data = tm.load(self.memory_file) or {}
+            self.memory = tm.entry_for(
+                self._memory_data, repo_key, [s.title for s in self.steps]
+            )
         self._out: list[str] = []
 
     # ---------- 输出缓冲 ----------
@@ -571,6 +585,21 @@ class WebTutor:
     def _flush(self) -> list[str]:
         out, self._out = self._out, []
         return out
+
+    def _record_step(self, passed: bool, weak: bool) -> None:
+        """一步完成时写入本地记忆（无 repo_key 时静默跳过，带读仍可离线工作）。"""
+        if not self.repo_key or self.memory_file is None:
+            return
+        from . import tutor_memory as tm
+
+        if self._memory_data is None:
+            self._memory_data = tm.load(self.memory_file) or {}
+        entry = tm.ensure_entry(
+            self._memory_data, self.repo_key, [s.title for s in self.steps]
+        )
+        tm.mark(entry, self.idx, passed=passed, weak=weak)
+        self.memory = entry
+        tm.save(self._memory_data, self.memory_file)
 
     # ---------- LLM 判定 ----------
     def _verdict(self, system: str, user: str, key: str) -> dict:
@@ -601,7 +630,14 @@ class WebTutor:
         for i, s in enumerate(self.steps, 1):
             goal = (s.objective or "").replace("\n", " ").strip()
             badge = " 🛠️" if s.task else ""
-            lines.append(f"{i}. **{s.title}**{badge}" + (f"　— {goal[:70]}" if goal else ""))
+            line = f"{i}. **{s.title}**{badge}" + (f"　— {goal[:70]}" if goal else "")
+            if self.memory is not None:
+                st = self.memory.get("steps", [])[i - 1]
+                if st.get("passed"):
+                    line = "✅ " + line
+                if st.get("weak"):
+                    line += "　⚠ 薄弱（建议先复述）"
+            lines.append(line)
         lines += [
             "",
             "> 路线即编号顺序：每步 = 精读 → 苏格拉底自检 → 动手实验（可选）。",
@@ -627,12 +663,32 @@ class WebTutor:
                    "再按步骤 精读 → 苏格拉底自检 →（可选）动手。\n\n"
                    "命令：`go`(读完/继续) · `提示`(要引导) · `问：…`(自由提问) · `跳过`(跳过动手) · `退出`"
                    .format(n=len(self.steps)))
+        resume = 0
+        if self.memory is not None:
+            from . import tutor_memory as tm
+
+            completed = tm.completed_count(self.memory)
+            weak = tm.weak_indexes(self.memory)
+            resume = tm.next_index(self.memory)
+            if resume >= len(self.steps):
+                resume = 0
+                self._emit("🎓 **上次全部步骤已完成 ✅**。本次从第 1 步开始巩固"
+                           + (f"，RoadMap 已标出 ⚠ 薄弱点（{len(weak)} 处）。" if weak else "。"))
+            elif resume > 0:
+                self._emit(
+                    f"📌 **上次进度已记忆**：已完成 {completed}/{len(self.steps)} 步，"
+                    f"本次从第 {resume + 1} 步继续。"
+                    + (f"⚠ 薄弱 {len(weak)} 处，建议先复述再往下。" if weak else "")
+                )
+        if resume:
+            self.idx = resume
         self._enter_step()
         return self._flush()
 
     # ---------- 步骤状态机 ----------
     def _enter_step(self) -> None:
         self.pending_diagram = ""
+        self.step_weak = False
         step = self.steps[self.idx]
         parts = [f"### 第 {self.idx + 1}/{len(self.steps)} 步｜{step.title}"]
         if step.objective:
@@ -682,10 +738,13 @@ class WebTutor:
         self.history = []
 
     def _finish_step(self) -> None:
+        self._record_step(passed=True, weak=self.step_weak)
         step = self.steps[self.idx]
         if step.unlock:
             self._emit(f"🔓 **解锁条件**：{step.unlock}")
         self._emit(f"✅ 第 {self.idx + 1} 步完成。先用自己的话把它讲一遍，再继续。")
+        if self.step_weak:
+            self._emit("⚠ 该步有自检要点没一次掌握，已记为薄弱点：下次回来 RoadMap 会标出，建议先复述再继续。")
         if self.idx + 1 < len(self.steps):
             self.idx += 1
             self._enter_step()
@@ -833,6 +892,7 @@ class WebTutor:
             self._emit(f"· {verdict['comment']}")
         if self.attempts >= MAX_ATTEMPTS:
             self._emit(f"（多次追问仍未覆盖，先记下参考答案：{point}。建议回看再回来。）")
+            self.step_weak = True
             self.j += 1
             self.follow = ""
             if self.j < len(rubric):

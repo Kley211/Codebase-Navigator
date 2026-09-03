@@ -25,6 +25,7 @@ from src.repo import load_repo
 from src.report import generate_report
 from src.progress import ProgressStore
 from src.tutor import WebTutor
+from src import tutor_memory
 from src.diagram import mermaid_html, module_map_mermaid
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -195,7 +196,7 @@ def _tutor_start(regen: bool) -> tuple[list, str, str, str]:
                 plan_text = agent.get_learn_plan()
                 plan_path.write_text(plan_text, encoding="utf-8")
             state["tutor_plan"] = plan_text
-        tutor = WebTutor(agent, plan_text)
+        tutor = WebTutor(agent, plan_text, repo_key=Path(state["repo_path"]).name)
         state["tutor"] = tutor
         roadmap = tutor.roadmap_md()
         history = [{"role": "assistant", "content": m} for m in tutor.start()]
@@ -219,6 +220,24 @@ def tutor_start() -> tuple[list, str, str, str]:
 def tutor_regen() -> tuple[list, str, str, str]:
     """「重新生成剧本」：忽略旧剧本，让 AI 重新生成一份。"""
     return _tutor_start(regen=True)
+
+
+def tutor_restart() -> tuple[list, str, str, str]:
+    """「清空记忆重学」：清空当前仓库的带读记忆并立刻从第 1 步开始（保留剧本）。"""
+    key = _progress_repo_key()
+    if not key:
+        return [], "请先加载仓库。", "", _TUTOR_DIAGRAM_IDLE
+    try:
+        data = tutor_memory.load()
+        data.pop(key, None)
+        tutor_memory.save(data)
+    except Exception as e:
+        note = f"❌ 清空带读记忆失败：{e}"
+        return [{"role": "assistant", "content": note}], "操作失败", "", _TUTOR_DIAGRAM_IDLE
+    state["tutor"] = None
+    history, summary, roadmap, diagram = _tutor_start(regen=False)
+    head = [{"role": "assistant", "content": "🗑️ 已清空本仓库的带读记忆，下面从第 1 步重新开始。若有 ⚠ 薄弱点也已清除，重学达标后会重新判定。"}]
+    return (head + (history or [])), summary, roadmap, diagram
 
 
 def tutor_reset(roadmap: str = "") -> tuple[list, str, str, str]:
@@ -245,7 +264,7 @@ def tutor_send(message: str, history: list) -> tuple[list, str, str, str]:
     if message:
         history = history + [{"role": "user", "content": message}]
     history = history + [{"role": "assistant", "content": m} for m in msgs]
-    return history, tutor.summary(), "", _tutor_diagram_out()
+    return history, tutor.summary(), tutor.roadmap_md(), _tutor_diagram_out()
 
 
 def static_report() -> str:
@@ -439,10 +458,14 @@ def build_app() -> gr.Blocks:
                     "验收 = **能复述 + 能讲**（能改是加分项，动手可 `跳过`）。"
                     "第一次点「开始带读」会用 AI 生成剧本（约 1-2 分钟），之后秒开。"
                     "途中看不懂可输入 `问：你的问题`，想看局部图可输入 `画图：请求流程` 这类主题。"
+                    "\n\n📌 **自动记进度**：每步带读结果（自检通过 / ⚠ 薄弱点）会写入本地"
+                    " `~/.codebase-navigator/tutor_memory.json`；下次点「开始带读」会从上次停下的步骤续读，"
+                    "薄弱点会在 RoadMap 上标 ⚠，建议先复述再继续。"
                 )
                 with gr.Row(elem_id="tutor-actions"):
                     tutor_start_btn = gr.Button("开始带读", variant="primary", elem_id="tutor-start")
                     tutor_regen_btn = gr.Button("重新生成剧本", variant="secondary", elem_id="tutor-regen")
+                    tutor_restart_btn = gr.Button("清空记忆重学", variant="secondary", elem_id="tutor-restart")
                     tutor_stop_btn = gr.Button("结束会话", variant="stop", elem_id="tutor-stop")
                 tutor_roadmap = gr.Markdown(
                     "（还没有路线图。点「开始带读」会先生成 RoadMap，再逐步带读。）",
@@ -483,6 +506,9 @@ def build_app() -> gr.Blocks:
         )
         tutor_regen_btn.click(
             tutor_regen, None, [tutor_chat, tutor_summary, tutor_roadmap, tutor_diagram]
+        )
+        tutor_restart_btn.click(
+            tutor_restart, None, [tutor_chat, tutor_summary, tutor_roadmap, tutor_diagram]
         )
         tutor_stop_btn.click(
             tutor_reset,

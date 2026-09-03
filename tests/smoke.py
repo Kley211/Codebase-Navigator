@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -20,6 +21,7 @@ from src.context import build_overview_context, _is_large, _module_layout
 from src.progress import MILESTONES, ProgressStore
 from src.learn import validate_learn_plan
 from src.tutor import parse_plan, WebTutor, _is_question
+from src import tutor_memory
 from src.diagram import (
     architecture_facts,
     extract_mermaid_block,
@@ -265,6 +267,99 @@ def main() -> int:
         print("[❌] 自由提问识别规则异常")
         failed += 1
 
+    # 带读记忆闭环：断点续读 + 薄弱点标注 + 重学补强清标（Learning Agent 最小闭环）
+    class _ScriptedLLM:
+        """离线 LLM 替身：前 fail_first 次自检判定失败（模拟多次追问），之后一律通过。"""
+        def __init__(self, fail_first: int = 0):
+            self.judged = 0
+            self.fail_first = fail_first
+        def direct(self, system, user, temperature=0.2, max_tokens=800):
+            if "mermaid" in (system or "").lower():
+                return "```mermaid\nflowchart TD\n  A[\"x\"] --> B[\"y\"]\n```"
+            self.judged += 1
+            if self.judged <= self.fail_first:
+                return '{"mastered": false, "comment": "还缺一个点", "follow_up": "换个角度再答一次？"}'
+            return '{"mastered": true, "comment": "回答到位", "follow_up": ""}'
+        def chat(self, message):
+            return "答疑：看 app.py:8。"
+
+    mem_dir = Path(tempfile.mkdtemp(prefix="nav-mem-"))
+    mem_file = mem_dir / "tutor_memory.json"
+    plan_text = make_good_learn_plan()
+    plan_titles = [s.title for s in parse_plan(plan_text)[0]]
+
+    def _pass_one_step(wt, answer1: str, answer2: str) -> None:
+        """读完 → go → 两个自检要点 → 跳过动手 → 完成第 1 步。"""
+        wt.respond("go")
+        wt.respond(answer1)
+        wt.respond(answer2)
+        wt.respond("跳过")
+
+    # A. 干净完成第 1 步 → 记忆 passed=true；新会话断点续读停在未完成的第 2 步
+    wt_clean = WebTutor(_ScriptedLLM(0), plan_text, repo_key="demo", memory_file=mem_file)
+    wt_clean.start()
+    _pass_one_step(
+        wt_clean,
+        "我的理解：这段把输入处理成结果交给调用方。",
+        "少了一环调用方就拿不到结果，所以不能省。",
+    )
+    if wt_clean.idx != 1:
+        print(f"[❌] 干净完成第 1 步后应进入第 2 步，实际 idx={wt_clean.idx}")
+        failed += 1
+    mem_json = json.loads(mem_file.read_text(encoding="utf-8"))
+    first_step = mem_json["demo"]["steps"][0]
+    if (
+        mem_json["demo"]["titles"] != plan_titles
+        or not first_step.get("passed")
+        or first_step.get("weak")
+    ):
+        print("[❌] 干净完成第 1 步后记忆应记 passed=true、weak=false")
+        failed += 1
+    wt_resume = WebTutor(_ScriptedLLM(0), plan_text, repo_key="demo", memory_file=mem_file)
+    msgs_resume = wt_resume.start()
+    if wt_resume.idx != 1 or not any("上次进度已记忆" in m for m in msgs_resume):
+        print(f"[❌] 断点续读应停在第 2 步并提示已记忆，实际 idx={wt_resume.idx}")
+        failed += 1
+
+    # B. 某要点被追问到上限仍未覆盖 → 步骤记为薄弱，RoadMap 标 ⚠，续读开场提示
+    mem_file_weak = mem_dir / "tutor_memory_weak.json"
+    wt_weak = WebTutor(_ScriptedLLM(fail_first=4), plan_text, repo_key="demo", memory_file=mem_file_weak)
+    wt_weak.start()
+    wt_weak.respond("go")
+    for _ in range(4):
+        wt_weak.respond("我不太确定，可能是这样吧……")
+    wt_weak.respond("调用方拿到结果才能继续，缺了就断链。")
+    wt_weak.respond("跳过")
+    weak_json = json.loads(mem_file_weak.read_text(encoding="utf-8"))
+    weak_first = weak_json["demo"]["steps"][0]
+    if not (weak_first.get("passed") and weak_first.get("weak")):
+        print("[❌] 多次追问仍未覆盖的步骤应记 passed + weak")
+        failed += 1
+    wt_weak_road = WebTutor(_ScriptedLLM(0), plan_text, repo_key="demo", memory_file=mem_file_weak)
+    if "⚠ 薄弱" not in wt_weak_road.roadmap_md():
+        print("[❌] RoadMap 应标出薄弱点 ⚠")
+        failed += 1
+    if not any("薄弱" in m for m in wt_weak_road.start()):
+        print("[❌] 续读开场应提示薄弱点数量")
+        failed += 1
+
+    # C. tm API：重学干净通过后 mark(weak=False) 清除旧 ⚠；全部完成后 next_index=len
+    data_c = {}
+    entry_c = tutor_memory.ensure_entry(data_c, "demo", plan_titles)
+    tutor_memory.mark(entry_c, 0, passed=True, weak=True)
+    if not entry_c["steps"][0]["weak"]:
+        print("[❌] mark(weak=True) 应写入薄弱标记")
+        failed += 1
+    tutor_memory.mark(entry_c, 0, passed=True, weak=False)
+    if entry_c["steps"][0]["weak"]:
+        print("[❌] 重学补强后 mark(weak=False) 应清除薄弱标记")
+        failed += 1
+    for i in range(len(plan_titles)):
+        tutor_memory.mark(entry_c, i, passed=True, weak=False)
+    if tutor_memory.next_index(entry_c) != len(plan_titles):
+        print("[❌] 全部步骤通过后 next_index 应等于步骤总数")
+        failed += 1
+
     # 图渲染抽象（离线，无 LLM）：静态模块地图 + Mermaid 提取/预检 + HTML 封装
     mm = module_map_mermaid(str(large_repo))
     if not mm.startswith("flowchart TD") or "core/" not in mm or "api/" not in mm:
@@ -304,10 +399,11 @@ def main() -> int:
         print("[✅] 带读剧本结构校验")
         print("[✅] 带读剧本解析")
         print("[✅] RoadMap / 自由提问 / 动手可选")
+        print("[✅] 带读记忆闭环（断点续读 / 薄弱点）")
         print("[✅] 架构图渲染抽象")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 5 - failed}/{len(checks) + 5} 通过")
+    print(f"\n结果：{len(checks) + 6 - failed}/{len(checks) + 6} 通过")
     return 0 if failed == 0 else 1
 
 
