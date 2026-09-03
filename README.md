@@ -47,6 +47,16 @@ python cli.py https://github.com/psf/requests --report --output report.md
 
 也支持本地路径：`python cli.py E:\some\repo --report`。
 
+### 网页版（自用推荐）
+
+```bash
+pip install -r requirements-web.txt     # 含 Gradio（只装过 requirements.txt 需补装）
+cp .env.example .env                     # 已建过 .env 可跳过
+python app.py                            # 打开 http://127.0.0.1:7860
+```
+
+页面粘贴 GitHub URL 或本地路径 → 点「加载仓库」。**没有 API Key 也能用**：静态报告与学习清单不依赖模型；AI 概览 / 源码问答 / 带读陪练才需要 Key（默认 OpenRouter 免费模型 `z-ai/glm-5.2:free`）。Key 可以写在 `.env`，也可以临时填在页面顶部「API Key」后重新点「加载仓库」，不必改文件。
+
 ### 带读剧本（--learn）
 
 面向**会自己建虚拟环境、装依赖、能跑通项目、会看报错，但没系统读过开源项目源码**的开发者。
@@ -89,6 +99,12 @@ AI 会按需生成一张局部图（flowchart/时序）显示在会话上方。�
 AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
 Mermaid 渲染优先使用本地 `web/mermaid.min.js`（首次启动自动下载，可在无公网 CDN 时渲染），
 缺失时依次回退 jsdelivr / unpkg 在线加载。
+
+## 常见问题（自用）
+
+- **GitHub 连不上 / 克隆超时？** URL 仓库会浅克隆并缓存到 `~/.codebase-navigator/repos`，第二次加载同一仓库直接复用、免联网；想拉最新代码删除对应目录再加载。失败时页面会给出「镜像 / 本地路径」提示，也可以在别处克隆好后直接粘贴本地目录。
+- **提示缺少 API Key？** 静态报告与学习清单不需要；AI 功能需在 `.env` 配 `OPENROUTER_API_KEY`（默认免费模型 `z-ai/glm-5.2:free`）或在页面顶部临时填写，然后重新点「加载仓库」。
+- **学习进度 / 带读记忆存在哪？** `~/.codebase-navigator/progress.json` 与 `tutor_memory.json`；文件意外损坏时会自动备份为 `*.corrupt-<时间戳>` 并从空记录重新开始，不会卡死或丢新数据。
 
 ## MCP Server（供 Codex / Claude / Cursor 调用）
 
