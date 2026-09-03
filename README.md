@@ -10,6 +10,7 @@
 - **自动降级**：免费模型共享池限流（429/过载）时自动切换到备用免费模型（`minimax/minimax-m3:free` 等），成功后记住当前模型
 - **CLI 优先**：一份 Markdown 报告即交付物，方便导出、分享、写进简历
 - **带读剧本（Learn Plan）**：面向「会装环境但没读过开源源码」的新手，把仓库转成 5-8 步可执行计划——每步含目标 / 精读段落 / 动手任务 / 苏格拉底式自检，验收标准是「能复述 + 能改 + 能讲」
+- **带读陪练（Tutor）**：把剧本变成一问一答的交互会话——AI 按「合格回答应包含」逐条苏格拉底式追问，判定覆盖度，没覆盖就换角度再问，动手实验跑通才解锁下一步
 - **评测驱动**：内置 10 个 GitHub Trending 热门仓库评测集，质量可量化
 
 ## 快速开始
@@ -36,7 +37,10 @@ python cli.py https://github.com/psf/requests --ask "认证是如何实现的？
 # 6. 生成「带读剧本」（需要 API Key，自动存为 learn-requests.md）
 python cli.py https://github.com/psf/requests --learn
 
-# 7. 保存报告
+# 7. 进入「AI 带读陪练」（复用/自动生成剧本，逐问判定，需要 API Key）
+python cli.py https://github.com/psf/requests --tutor
+
+# 8. 保存报告
 python cli.py https://github.com/psf/requests --report --output report.md
 ```
 
@@ -51,6 +55,15 @@ python cli.py https://github.com/psf/requests --report --output report.md
 
 > 注意：URL 仓库会被克隆到临时目录用于分析，动手实验请在你自己的工作副本进行
 > （`git clone <repo>` 一份）。
+
+### 带读陪练（--tutor）
+
+在剧本基础上进入交互会话：每一步先按「读这里（精确到行号区间）」精读，读完输入 `go`
+开始自检。AI 会对照剧本里的「合格回答应包含」逐条苏格拉底式追问——你的回答覆盖到要点就
+通过，答得浅就换一个角度继续问，直到确认你真的理解；动手实验（改代码并验证结果）达标后
+才解锁下一步。会话中随时可输入 `提示` 要引导（不剧透答案）或 `退出` 结束。
+
+也可复用已有剧本：`python cli.py <仓库> --tutor --plan learn-<仓库名>.md`
 
 ## Web 界面（Phase 3）
 
@@ -122,6 +135,8 @@ python evals/run_ai_evals.py --filter flask,requests --save evals/.cache/ai_repo
 │   ├── repo.py            # 仓库加载（URL 克隆 / 本地路径）
 │   ├── report.py          # 静态学习报告（无 LLM）
 │   ├── agent.py           # Agent 主循环（工具调用，无 LangChain）
+│   ├── learn.py           # 带读剧本结构校验
+│   ├── tutor.py           # 带读陪练（苏格拉底式逐问判定）
 │   ├── prompts.py         # 系统提示词（反幻觉约束）
 │   ├── config.py          # 多提供商 LLM 配置
 │   └── tools/             # 8 个确定性分析工具

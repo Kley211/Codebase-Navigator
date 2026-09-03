@@ -5,6 +5,7 @@
   python cli.py <仓库URL或路径> --overview          AI 概览（需要 API Key）
   python cli.py <仓库URL或路径> --ask "问题"         提问
   python cli.py <仓库URL或路径> --learn            带读剧本（需要 API Key）
+  python cli.py <仓库URL或路径> --tutor            AI 带读陪练（苏格拉底式逐问判定）
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--overview", action="store_true", help="生成 AI 代码库概览（需要 API Key）")
     parser.add_argument("--ask", metavar="QUESTION", help="向 AI 提问")
     parser.add_argument("--learn", action="store_true", help="生成「带读剧本」：5-8 步可自检的学习计划（需要 API Key）")
+    parser.add_argument("--tutor", action="store_true", help="启动「带读陪练」：逐问苏格拉底式追问并判定理解（需要 API Key）")
+    parser.add_argument("--plan", metavar="PATH", help="--tutor 使用已有剧本文件（默认复用/生成 learn-<仓库名>.md）")
     parser.add_argument("--provider", choices=list(PROVIDERS), help="LLM 提供商")
     parser.add_argument("--model", help="模型名称（默认按提供商选择）")
     parser.add_argument("--api-key", help="API Key（也可用环境变量）")
@@ -51,15 +54,15 @@ def main() -> int:
 
     print(f"📁 仓库：{repo_path}")
 
-    if args.report or not (args.overview or args.ask or args.learn):
+    if args.report or not (args.overview or args.ask or args.learn or args.tutor):
         print("\n" + "=" * 60)
         report = generate_report(str(repo_path))
         print(report)
         if args.output:
             Path(args.output).write_text(report, encoding="utf-8")
             print(f"\n✅ 报告已保存：{args.output}")
-        if not (args.overview or args.ask or args.learn):
-            print("\n提示：用 --overview 生成 AI 概览，用 --ask '你的问题' 提问，用 --learn 生成带读剧本。")
+        if not (args.overview or args.ask or args.learn or args.tutor):
+            print("\n提示：用 --overview 生成 AI 概览，用 --ask '你的问题' 提问，用 --learn 生成带读剧本，用 --tutor 进入带读陪练。")
             return 0
 
     try:
@@ -96,6 +99,28 @@ def main() -> int:
                 "\n提示：URL 仓库被克隆在临时目录用于分析，动手实验请在你自己的工作副本进行：\n"
                 f"  git clone {args.repo}"
             )
+        return 0
+
+    if args.tutor:
+        from src.tutor import run_tutor_loop
+
+        plan_path = Path(args.plan) if args.plan else Path.cwd() / f"learn-{repo_path.name}.md"
+        if plan_path.exists():
+            plan_text = plan_path.read_text(encoding="utf-8")
+            print(f"📖 使用已有剧本：{plan_path}")
+        else:
+            print("\n🎓 尚未找到剧本，正在生成（可能需要一两分钟）...")
+            plan_text = agent.get_learn_plan()
+            plan_path.write_text(plan_text, encoding="utf-8")
+            print(f"✅ 剧本已保存：{plan_path}")
+        print("\n💬 进入带读陪练……（阅读完成后输入 go；随时可输入 提示 / 退出）")
+        result = run_tutor_loop(agent, plan_text)
+        if result == "aborted":
+            print(f"\n会话已退出。剧本保留在 {plan_path}，重新运行 --tutor 即可再来。")
+            return 0
+        if result == "failed":
+            return 1
+        print("\n🎉 会话完成。复述、能改、能讲——你已经真正读过这个项目了。")
         return 0
 
     if args.ask:

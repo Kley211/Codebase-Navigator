@@ -259,6 +259,18 @@ class CodebaseNavigator:
         self.conversation.append({"role": "assistant", "content": content})
         return content
 
+    def direct(self, system: str, user: str, temperature: float = 0.2, max_tokens: int = 800) -> str:
+        """单轮直答（不带工具循环），供带读陪练的判定/追问/提示使用。"""
+        response = self._complete(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content or ""
+
     def chat(self, message: str) -> str:
         """自由对话。"""
         return self._run(message)

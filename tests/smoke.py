@@ -19,6 +19,7 @@ from src.tools import call_tool
 from src.context import build_overview_context, _is_large, _module_layout
 from src.progress import MILESTONES, ProgressStore
 from src.learn import validate_learn_plan
+from src.tutor import parse_plan
 
 
 def make_fake_repo() -> Path:
@@ -159,12 +160,22 @@ def main() -> int:
         print("[❌] 带读剧本应拒绝没有步骤的内容")
         failed += 1
 
+    # 带读剧本解析（离线）：步骤齐全、每个步骤都有自检问句与判定要点
+    parsed_steps, parsed_tail = parse_plan(make_good_learn_plan())
+    if len(parsed_steps) != 5 or not parsed_tail:
+        print(f"[❌] 带读剧本解析步骤异常：{len(parsed_steps)} 步, tail={bool(parsed_tail)}")
+        failed += 1
+    if not parsed_steps[0].questions or not parsed_steps[0].rubric or not parsed_steps[0].task:
+        print("[❌] 带读剧本解析缺少 自检问句/判定要点/动手任务")
+        failed += 1
+
     if failed == 0:
         print("[✅] 静态报告")
         print("[✅] 带读剧本结构校验")
+        print("[✅] 带读剧本解析")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 2 - failed}/{len(checks) + 2} 通过")
+    print(f"\n结果：{len(checks) + 3 - failed}/{len(checks) + 3} 通过")
     return 0 if failed == 0 else 1
 
 
