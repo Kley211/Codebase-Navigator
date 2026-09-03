@@ -21,6 +21,8 @@ from openai import APIError, APIConnectionError, APITimeoutError, OpenAI, RateLi
 from .config import LLMConfig
 from .context import build_overview_context
 from .prompts import (
+    ASK_PLAN_SYS,
+    ASK_PLAN_USER,
     SINGLE_SHOT_PROMPT,
     SYSTEM_PROMPT,
     OVERVIEW_PROMPT,
@@ -41,6 +43,7 @@ _HEADING_RE = re.compile(r"^#{1,6}\s", re.M)
 
 # 模型用文本模拟工具调用的特征标记（格式五花八门，检测到即处理）
 _FAKE_MARKER_RE = re.compile(r"tool_calls|invoke name=|parameter name=|\uff5c")
+_ASK_STEP_RE = re.compile(r"^\s*(?:[-*•]|\d+\s*[.、)])\s*(.*)$")
 
 # 免费模型（如 OpenRouter 共享池）偶发限流/过载：多轮尝试 + 跨模型降级
 _PASS_DELAYS = (0, 8, 25)  # 每轮尝试前等待秒数（0 为立即）
@@ -70,6 +73,21 @@ def _ask_final_check(content: str) -> bool:
     return len(set(_CITE_RE.findall(text))) >= 2
 
 
+def _parse_ask_plan(text: str, max_steps: int = 5) -> list[str]:
+    """把规划器输出解析成步骤列表（容忍编号/无序列表/多余标题等噪音）。"""
+    lines: list[str] = []
+    for raw in (text or "").splitlines():
+        m = _ASK_STEP_RE.match(raw)
+        if not m:
+            continue
+        step = m.group(1).strip()
+        if step:
+            lines.append(step[:200])
+        if len(lines) >= max_steps:
+            break
+    return lines
+
+
 class CodebaseNavigator:
     """面向单个仓库的学习 Agent。"""
 
@@ -82,6 +100,7 @@ class CodebaseNavigator:
         self.client = OpenAI(api_key=config.api_key, base_url=config.base_url)
         self.conversation: list[dict] = []
         self.last_tool_calls: list[dict] = []
+        self.last_plan: list[str] = []
         # 模型降级链：主模型在前，备用模型在后；active_model 记录实际生效的模型
         self.models = [config.model, *config.fallback_models]
         self.active_model = config.model
@@ -243,7 +262,75 @@ class CodebaseNavigator:
 
     def ask(self, question: str) -> str:
         """针对代码库提问。"""
-        return self._run(DEEP_DIVE_PROMPT.format(question=question))
+        return self._run_ask(DEEP_DIVE_PROMPT.format(question=question), question)
+
+    def _orientation_snippet(self, limit: int = 1800) -> str:
+        """紧凑的仓库方位（目录/入口/依赖），供规划器精确指定步骤；不消耗工具预算。"""
+        from .tools.file_explorer import list_directory_structure
+        from .tools.code_analyzer import analyze_dependencies, find_entry_points
+
+        sections = [
+            ("目录（深度 2）", lambda: list_directory_structure(self.repo_path, max_depth=2), 700),
+            ("入口", lambda: find_entry_points(self.repo_path), 500),
+            ("依赖", lambda: analyze_dependencies(self.repo_path), 500),
+        ]
+        parts: list[str] = []
+        used = 0
+        for label, fn, cap in sections:
+            try:
+                text = (fn() or "").strip()
+            except Exception:
+                text = ""
+            if not text:
+                continue
+            text = text[:cap]
+            if used + len(text) > limit:
+                text = text[: max(0, limit - used)]
+            used += len(text)
+            parts.append(f"【{label}】\n{text}")
+            if used >= limit:
+                break
+        return "\n\n".join(parts)
+
+    def _ask_plan(self, question: str) -> list[str]:
+        """Ask 前置规划：一次免工具调用拆解问题为 ≤5 步计划，存入 last_plan。"""
+        orientation = self._orientation_snippet()
+        messages = [
+            {"role": "system", "content": ASK_PLAN_SYS},
+            {
+                "role": "user",
+                "content": ASK_PLAN_USER.format(
+                    orientation=orientation or "（未能提取到目录信息，第 1 步先用 search_code 按关键词定位）",
+                    question=question,
+                ),
+            },
+        ]
+        plan: list[str] = []
+        try:
+            response = self._complete(messages, temperature=0.2, max_tokens=400)
+            plan = _parse_ask_plan(response.choices[0].message.content or "")
+        except Exception:
+            plan = []
+        if not plan:
+            plan = [
+                "search_code 按问题关键词定位相关文件 —— 找到实现所在",
+                "read_file 读取核心实现并记录真实 file:line",
+                "get_imports / get_function_signatures 理清调用链",
+                "输出带 ≥2 处 file:line 引用的最终回答",
+            ]
+        self.last_plan = plan
+        return plan
+
+    def _run_ask(self, user_message: str, question: str) -> str:
+        """Ask 主流程：先拆解计划，再按计划执行工具循环。"""
+        plan = self._ask_plan(question)
+        if plan:
+            user_message = (
+                f"{user_message}\n\n# 你的调研计划（按步执行；每步最多 1-2 个工具，"
+                "收集到 ≥2 处可引用位置就立即输出最终回答，不要重复探索）\n"
+                + "\n".join(f"{i + 1}. {step}" for i, step in enumerate(plan))
+            )
+        return self._run(user_message, final_check=_ask_final_check)
 
     def get_learn_plan(self) -> str:
         """生成「带读剧本」：把仓库转成 5-8 步、可自检的学习计划。
@@ -319,12 +406,16 @@ class CodebaseNavigator:
         return code
 
     def chat(self, message: str) -> str:
-        """自由对话。"""
-        return self._run(message, final_check=_ask_final_check)
+        """自由对话（Ask）：先拆解计划再执行，减少无方向探索。"""
+        return self._run_ask(message, message)
 
     def reset_conversation(self) -> None:
         self.conversation = []
         self.last_tool_calls = []
+        self.last_plan = []
 
     def get_last_tool_calls(self) -> list[dict]:
         return self.last_tool_calls
+
+    def get_last_plan(self) -> list[str]:
+        return self.last_plan

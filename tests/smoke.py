@@ -360,6 +360,57 @@ def main() -> int:
         print("[❌] 全部步骤通过后 next_index 应等于步骤总数")
         failed += 1
 
+    # Ask 规划拆分：先拆解计划再执行；计划进 metadata、不进最终回答正文
+    from types import SimpleNamespace
+    from src.agent import CodebaseNavigator, _parse_ask_plan
+    from src.config import LLMConfig
+
+    plan_steps = _parse_ask_plan("1. read_file app.py —— 看入口\n- 第二步\n3. done")
+    if plan_steps != ["read_file app.py —— 看入口", "第二步", "done"]:
+        print("[❌] Ask 计划解析应提取编号/无序列表步骤")
+        failed += 1
+    if _parse_ask_plan("前言\n1. a\n2. b\n后记") != ["a", "b"] or _parse_ask_plan("") != []:
+        print("[❌] Ask 计划解析应忽略非步骤文本")
+        failed += 1
+
+    class _FakeChatResp:
+        def __init__(self, text):
+            self.choices = [SimpleNamespace(message=SimpleNamespace(content=text, tool_calls=None))]
+
+    ag_plan = CodebaseNavigator(str(repo), LLMConfig("openrouter", "test-key", "https://example.invalid", "m"))
+    ag_state = {"plan_injected": False, "rounds": 0}
+
+    def _msg_text(m):
+        if isinstance(m, dict):
+            return m.get("content") or ""
+        return getattr(m, "content", "") or ""
+
+    def _fake_ask_complete(messages, **kwargs):
+        ag_state["rounds"] += 1
+        if "tools" not in kwargs:
+            return _FakeChatResp("1. read_file app.py —— 核实入口实现\n2. get_function_signatures app.py —— 看主流程")
+        joined = "\n".join(_msg_text(m) for m in messages)
+        ag_state["plan_injected"] = "调研计划" in joined and "read_file app.py" in joined
+        return _FakeChatResp(
+            "结论：入口定义在 app.py:1，主流程在 app.py:2。\n\n"
+            "两者先完成初始化再进入请求循环；若需要更多细节可以继续追问。"
+        )
+
+    ag_plan._complete = _fake_ask_complete
+    answer = ag_plan.chat("入口在哪里？")
+    if not ag_state["plan_injected"] or not ag_plan.last_plan:
+        print("[❌] Ask 应先拆解计划并把计划注入执行对话")
+        failed += 1
+    if "调研计划" in answer or "read_file" in answer or "app.py:1" not in answer:
+        print("[❌] Ask 计划不应混入最终回答，回答应保持引用正文")
+        failed += 1
+    if ag_state["rounds"] < 2:
+        print("[❌] Ask 应包含一次规划调用 + 至少一次执行调用")
+        failed += 1
+    if ag_plan.get_last_plan() != ag_plan.last_plan:
+        print("[❌] get_last_plan 应返回本轮拆解计划")
+        failed += 1
+
     # 图渲染抽象（离线，无 LLM）：静态模块地图 + Mermaid 提取/预检 + HTML 封装
     mm = module_map_mermaid(str(large_repo))
     if not mm.startswith("flowchart TD") or "core/" not in mm or "api/" not in mm:
@@ -400,10 +451,11 @@ def main() -> int:
         print("[✅] 带读剧本解析")
         print("[✅] RoadMap / 自由提问 / 动手可选")
         print("[✅] 带读记忆闭环（断点续读 / 薄弱点）")
+        print("[✅] Ask 规划拆分（先计划后执行）")
         print("[✅] 架构图渲染抽象")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 6 - failed}/{len(checks) + 6} 通过")
+    print(f"\n结果：{len(checks) + 7 - failed}/{len(checks) + 7} 通过")
     return 0 if failed == 0 else 1
 
 

@@ -84,7 +84,9 @@ AI 会按需生成一张局部图（flowchart/时序）显示在会话上方。�
 `~/.codebase-navigator/tutor_memory.json`：每完成一步（苏格拉底自检通过）即落盘，下次点「开始带读」
 从上次停下的步骤续读；多次追问仍未覆盖的要点会把该步标为 ⚠ 薄弱点（重学达标后自动清除），
 「清空记忆重学」可从第 1 步重来。学习进度勾选清单单独存于
-`~/.codebase-navigator/progress.json`。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
+`~/.codebase-navigator/progress.json`。源码问答（Tab 03）会让 Agent 先拆解 3–5 步调研计划再执行，
+回答下方会展示「本轮调研计划 + 实际工具调用次数」，方便看到它是怎么找到答案的。
+AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
 Mermaid 渲染优先使用本地 `web/mermaid.min.js`（首次启动自动下载，可在无公网 CDN 时渲染），
 缺失时依次回退 jsdelivr / unpkg 在线加载。
 

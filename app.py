@@ -318,22 +318,43 @@ def architecture_diagram() -> str:
             return f'<div class="cn-diagram-note">❌ 架构图生成失败：{e2}</div>'
 
 
-def chat(message: str, history: list) -> tuple[list, str]:
-    """边读边问。"""
+def _chat_plan_note(agent) -> str:
+    """Ask 问答后的透明化说明：本轮拆解的计划 + 实际工具调用（不进入回答正文）。"""
+    plan = agent.get_last_plan() or []
+    calls = agent.get_last_tool_calls() or []
+    lines = []
+    if plan:
+        lines.append("📋 **本轮调研计划**（Ask 先拆解再执行，避免无方向探索）")
+        lines += [f"{i + 1}. {step}" for i, step in enumerate(plan)]
+    if calls:
+        names: dict[str, int] = {}
+        for c in calls:
+            n = c.get("name", "?")
+            names[n] = names.get(n, 0) + 1
+        tools = " · ".join(f"{k}×{v}" for k, v in names.items())
+        lines.append(f"🔧 实际调用工具 {len(calls)} 次：{tools}")
+    return "\n\n".join(lines) if lines else ""
+
+
+def chat(message: str, history: list) -> tuple[list, str, str]:
+    """边读边问：Ask 会先拆解计划再执行，下方展示计划与工具调用情况。"""
     if not message.strip():
-        return history, ""
+        return history, "", ""
     if not state["agent"]:
         answer = "请先加载仓库（AI 功能需要 API Key）。"
+        plan_note = ""
     else:
         try:
             answer = state["agent"].chat(message)
+            plan_note = _chat_plan_note(state["agent"])
         except Exception as e:
             answer = f"❌ 出错了：{e}"
+            plan_note = ""
     history = history + [
         {"role": "user", "content": message},
         {"role": "assistant", "content": answer},
     ]
-    return history, ""
+    return history, "", plan_note
 
 
 # ---------------------------------------------------------------
@@ -437,6 +458,7 @@ def build_app() -> gr.Blocks:
                         elem_id="chat-input",
                     )
                     chat_btn = gr.Button("发送", variant="primary", scale=1, elem_id="chat-send")
+                chat_note = gr.Markdown("", elem_id="chat-note")
 
             with gr.Tab("04 · 学习进度"):
                 gr.Markdown(
@@ -495,8 +517,8 @@ def build_app() -> gr.Blocks:
         report_btn.click(static_report, None, report_out)
         overview_btn.click(ai_overview, None, [overview_out, trace_out])
         diagram_btn.click(architecture_diagram, None, diagram_html)
-        chat_btn.click(chat, [chat_input, chatbot], [chatbot, chat_input])
-        chat_input.submit(chat, [chat_input, chatbot], [chatbot, chat_input])
+        chat_btn.click(chat, [chat_input, chatbot], [chatbot, chat_input, chat_note])
+        chat_input.submit(chat, [chat_input, chatbot], [chatbot, chat_input, chat_note])
         load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_reset_btn.click(progress_reset, None, [progress_group, progress_label])
