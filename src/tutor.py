@@ -404,3 +404,264 @@ def run_tutor_loop(llm, plan_text: str, ask=input, say=print) -> str:
     """启动一次带读会话，返回 completed / aborted / failed。"""
     session = TutorSession(llm, plan_text, ask=ask, say=say)
     return session.run()
+
+class WebTutor:
+    """Web 用逐轮带读状态机：不阻塞等待输入，一次 respond() 处理一条用户消息。
+
+    与 CLI 的 TutorSession 共用 parse_plan / 判定提示词 / JSON 解析，
+    但把「读代码 → 自检 → 动手 → 毕业」拆成显式状态机，便于 Gradio 逐轮驱动。
+    """
+
+    PHASE_NAMES = {
+        "read": "阅读",
+        "quiz": "苏格拉底自检",
+        "task": "动手实验",
+        "grad": "毕业关卡",
+        "done": "已结束",
+        "idle": "未开始",
+    }
+
+    def __init__(self, llm, plan_text: str):
+        steps, tail = parse_plan(plan_text)
+        self.llm = llm
+        self.steps = steps
+        self.tail = tail
+        self.idx = -1              # 当前步骤下标
+        self.phase = "idle"        # read/quiz/task/grad/done/idle
+        self.j = 0                 # 自检要点下标
+        self.attempts = 0          # 当前阶段已尝试次数
+        self.history: list[tuple[str, str]] = []
+        self.follow = ""           # 当前待回答的追问
+        self._out: list[str] = []
+
+    # ---------- 输出缓冲 ----------
+    def _emit(self, text: str) -> None:
+        if text:
+            self._out.append(text)
+
+    def _flush(self) -> list[str]:
+        out, self._out = self._out, []
+        return out
+
+    # ---------- LLM 判定 ----------
+    def _verdict(self, system: str, user: str, key: str) -> dict:
+        text = self.llm.direct(system, user, temperature=0.1, max_tokens=700)
+        obj = _extract_json(text) or {}
+        ok = bool(obj.get(key)) if key in obj else False
+        return {
+            key: ok,
+            "comment": str(obj.get("comment", "")).strip(),
+            "follow_up": str(obj.get("follow_up", "")).strip(),
+        }
+
+    def _hint(self, context: str) -> None:
+        try:
+            step = self.steps[self.idx] if 0 <= self.idx < len(self.steps) else None
+            user = f"学习者卡在：{context or (step.title if step else '当前步骤')}\n请给一句不剧透的引导提示。"
+            hint = self.llm.direct(HINT_SYS, user, temperature=0.4, max_tokens=300)
+        except Exception as e:
+            hint = f"回到「读这里」的段落，想这段代码的职责和为什么这么写。（{e}）"
+        self._emit(f"💡 提示：{hint.strip()}")
+
+    # ---------- 会话入口 ----------
+    def start(self) -> list[str]:
+        if not self.steps:
+            self._emit("⚠️ 剧本解析失败：没有找到可用步骤，请点「重新生成剧本」。")
+            return self._flush()
+        self.idx = 0
+        self._emit("🎓 **带读陪练开始**：共 {n} 步。每步先精读、再接受苏格拉底式自检；"
+                   "自检与动手实验都通过才解锁下一步。\n\n命令：`go`(读完/继续) · `提示` · `退出`".format(n=len(self.steps)))
+        self._enter_step()
+        return self._flush()
+
+    # ---------- 步骤状态机 ----------
+    def _enter_step(self) -> None:
+        step = self.steps[self.idx]
+        parts = [f"### 第 {self.idx + 1}/{len(self.steps)} 步｜{step.title}"]
+        if step.objective:
+            parts.append(f"🎯 **目标**：{step.objective}")
+        if step.read_lines:
+            parts.append("📖 **读这里**（按行号打开精读）：")
+            parts += [f"- {line}" for line in step.read_lines]
+        if step.hints:
+            parts.append("💡 **边读边想**：")
+            parts += [f"- {h}" for h in step.hints[:4]]
+        self._emit("\n\n".join(parts))
+        self.phase = "read"
+        self.j = 0
+        self.attempts = 0
+        self.history = []
+        self._emit("读完输入 `go` 开始自检（可随时输入 `提示`）。")
+
+    def _enter_quiz(self) -> None:
+        step = self.steps[self.idx]
+        rubric = step.rubric or [step.objective]
+        if self.j < len(rubric):
+            questions = step.questions or ["用你自己的话讲讲刚读的这段在做什么？"]
+            question = questions[self.j % len(questions)]
+            self._emit(f"🎯 **自检 {self.j + 1}/{len(rubric)}**｜要求覆盖：{rubric[self.j]}")
+            self._emit(f"🧑‍🏫 {question}")
+            self.phase = "quiz"
+            self.attempts = 0
+            self.history = []
+            return
+        self._enter_task()
+
+    def _enter_task(self) -> None:
+        step = self.steps[self.idx]
+        self._emit("🛠️ **动手任务**（先动手，做完再回来汇报）：")
+        self._emit(step.task or "（本步没有明确任务，用一句话说说你能怎么验证理解。）")
+        self.phase = "task"
+        self.attempts = 0
+        self.history = []
+
+    def _finish_step(self) -> None:
+        step = self.steps[self.idx]
+        if step.unlock:
+            self._emit(f"🔓 **解锁条件**：{step.unlock}")
+        self._emit(f"✅ 第 {self.idx + 1} 步完成。先用自己的话把它讲一遍，再继续。")
+        if self.idx + 1 < len(self.steps):
+            self.idx += 1
+            self._enter_step()
+        else:
+            self._enter_graduation()
+
+    def _enter_graduation(self) -> None:
+        self._emit("🏁 **进入毕业关卡**（验收 = 能复述 + 能改 + 能讲）")
+        if self.tail:
+            self._emit(self.tail)
+        self.phase = "grad"
+        self.attempts = 0
+        self.history = []
+        self._emit("完成「改出来」后回来汇报：改了什么 / 看到什么结果 / 为什么。")
+
+    # ---------- 逐轮响应 ----------
+    def respond(self, text: str) -> list[str]:
+        text = (text or "").strip()
+        if not text:
+            self._emit("（输入内容为空，请直接回答或输入命令。）")
+            return self._flush()
+        if text in ("退出", "exit", "quit"):
+            self.phase = "done"
+            self._emit("👋 会话已退出。随时可以点「开始带读」继续（会从第 1 步重新走）。")
+            return self._flush()
+        if self.phase == "done":
+            self._emit("👋 会话已结束，点「开始带读」再来一轮。")
+            return self._flush()
+        if text in ("提示", "hint"):
+            self._hint(self._context_hint())
+            return self._flush()
+        if self.phase == "read":
+            if text in ("go", "开始", "开始自检"):
+                self._enter_quiz()
+            else:
+                self._emit("（阅读阶段：输入 `go` 表示读完了要开始自检，或输入 `提示` 要引导。）")
+            return self._flush()
+        if self.phase == "quiz":
+            self._answer_quiz(text)
+            return self._flush()
+        if self.phase == "task":
+            self._answer_task(text)
+            return self._flush()
+        if self.phase == "grad":
+            self._answer_grad(text)
+            return self._flush()
+        self._emit("（请先点「开始带读」启动会话。）")
+        return self._flush()
+
+    def _context_hint(self) -> str:
+        if self.phase == "quiz":
+            return self.follow or "当前自检问题"
+        if self.phase == "task":
+            step = self.steps[self.idx]
+            return step.task
+        return "当前步骤"
+
+    # ---------- 各阶段回答处理 ----------
+    def _answer_quiz(self, answer: str) -> None:
+        step = self.steps[self.idx]
+        rubric = step.rubric or [step.objective]
+        questions = step.questions or ["用你自己的话讲讲这段在做什么？"]
+        point = rubric[min(self.j, len(rubric) - 1)]
+        question = self.follow or questions[self.j % len(questions)]
+        self.attempts += 1
+        self.history.append((question, answer))
+        verdict = self._verdict(JUDGE_SYS, _judge_user(step, question, point, self.history, answer), "mastered")
+        if verdict["mastered"]:
+            self._emit(f"✅ 要点 {self.j + 1} 覆盖：{verdict['comment'] or '回答到位。'}")
+            self.j += 1
+            self.follow = ""
+            if self.j < len(rubric):
+                self._enter_quiz()
+            else:
+                self._enter_task()
+            return
+        if verdict.get("comment"):
+            self._emit(f"· {verdict['comment']}")
+        if self.attempts >= MAX_ATTEMPTS:
+            self._emit(f"（多次追问仍未覆盖，先记下参考答案：{point}。建议回看再回来。）")
+            self.j += 1
+            self.follow = ""
+            if self.j < len(rubric):
+                self._enter_quiz()
+            else:
+                self._enter_task()
+            return
+        self.follow = verdict.get("follow_up") or question
+        self._emit(f"🧑‍🏫 追问：{self.follow}")
+
+    def _answer_task(self, report: str) -> None:
+        step = self.steps[self.idx]
+        self.attempts += 1
+        self.history.append(("", report))
+        verdict = self._verdict(TASK_JUDGE_SYS, _task_user(step, step.task, self.history, report), "done")
+        if verdict["done"]:
+            self._emit(f"✅ 动手实验通过：{verdict['comment'] or '干得漂亮。'}")
+            self._finish_step()
+            return
+        if verdict.get("comment"):
+            self._emit(f"· {verdict['comment']}")
+        if self.attempts >= MAX_ATTEMPTS:
+            self._emit("（动手实验暂未达标。建议回到任务描述重做，完成后可继续下一步。）")
+            self._finish_step()
+            return
+        self.follow = verdict.get("follow_up") or ""
+        if self.follow:
+            self._emit(f"🧑‍🏫 追问：{self.follow}")
+        else:
+            self._emit("请再试一次：说清你改了什么、看到了什么结果、为什么。")
+
+    def _answer_grad(self, report: str) -> None:
+        self.attempts += 1
+        self.history.append(("", report))
+        task = "完成剧末「改出来」综合改造任务并汇报：改了什么 / 看到什么结果 / 为什么"
+        stub = LearnStep(title="剧末验收", task=task, raw=self.tail or task)
+        verdict = self._verdict(TASK_JUDGE_SYS, _task_user(stub, task, self.history, report), "done")
+        if verdict["done"]:
+            self.phase = "done"
+            self._emit(f"🎓 **恭喜毕业！** {verdict['comment'] or ''}")
+            self._emit("现在你可以：① 给别人讲 3 分钟这个项目；② 照剧末「下一步」去提第一个 PR。")
+            return
+        if verdict.get("comment"):
+            self._emit(f"· {verdict['comment']}")
+        if self.attempts >= MAX_ATTEMPTS:
+            self.phase = "done"
+            self._emit("（毕业关卡暂未达标也没关系，完成后随时回来汇报。）")
+            return
+        self.follow = verdict.get("follow_up") or ""
+        if self.follow:
+            self._emit(f"🧑‍🏫 追问：{self.follow}")
+        else:
+            self._emit("请再试一次：说清你改了什么、看到了什么结果、为什么。")
+
+    # ---------- 状态摘要 ----------
+    def summary(self) -> str:
+        if self.phase in ("idle",):
+            return "尚未开始。加载仓库后点「开始带读」。"
+        if self.phase == "done":
+            return "会话已结束。点「开始带读」再来一轮。"
+        step_text = f"第 {self.idx + 1}/{len(self.steps)} 步"
+        return f"`{step_text} · {self.PHASE_NAMES.get(self.phase, self.phase)}`" + (
+            f" · 自检 {self.j + 1}/{max(len(self.steps[self.idx].rubric or [self.steps[self.idx].objective]), 1)}"
+            if self.phase == "quiz" else ""
+        )

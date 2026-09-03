@@ -73,7 +73,8 @@ python app.py
 # 打开 http://127.0.0.1:7860
 ```
 
-单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问 → 学习进度勾选清单。进度自动保存到本地 `~/.codebase-navigator/progress.json`。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
+单页包含：静态报告（免费）→ AI 概览（含工具调用轨迹）→ 边读边问 → 学习进度勾选清单 → **带读陪练**。
+带读陪练（Tab 05）把剧本搬进浏览器：点「开始带读」自动复用/生成剧本，之后在同一会话里读代码、回答苏格拉底自检、汇报动手结果，AI 逐问判定理解，通过才解锁下一步。进度自动保存到本地 `~/.codebase-navigator/progress.json`。AI 功能默认读取 `.env` 的 API Key，也可在页面上临时填写。
 
 ## MCP Server（供 Codex / Claude / Cursor 调用）
 
