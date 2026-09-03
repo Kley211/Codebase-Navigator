@@ -38,14 +38,17 @@ def normalize_url(url: str) -> str:
 
 
 def cache_dir_for(url: str) -> Path:
-    """按 URL 计算稳定的缓存目录名（host__owner__repo）。"""
+    """按 URL 计算稳定的缓存目录：<owner>/<repo>（目录名即仓库名，标题/进度 key 好看）。"""
     url = normalize_url(url).rstrip("/")
     m = re.search(r"[:/]([^/:]+)/([^/]+?)(?:\.git)?$", url)
     if m:
         owner, repo = m.group(1), m.group(2)
         host = re.search(r"://([^/]+)", url)
         host = host.group(1).split(":")[0].split(".")[0] if host else "git"
-        return REPO_CACHE_ROOT / f"{host}__{owner}__{repo}"
+        if host in ("github", "git", "www"):  # git@github.com / github.com
+            return REPO_CACHE_ROOT / owner / repo
+        # 其它镜像站（gitee 等）用 host 前缀避免撞名
+        return REPO_CACHE_ROOT / f"{host}__{owner}" / repo
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:8]
     name = re.sub(r"[^A-Za-z0-9_.-]+", "_", url)[-70:] or "repo"
     return REPO_CACHE_ROOT / f"{name}__{digest}"
