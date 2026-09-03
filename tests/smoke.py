@@ -82,7 +82,14 @@ def make_good_learn_plan() -> str:
     for i in range(5):
         parts.append(step_tpl.format(n=i + 1, a=1 + i * 3, b=10 + i * 3, c=20 + i, d=30 + i))
     parts.append("## 剧末验收（毕业关卡）\n- **讲出来**：给别人讲 3 分钟提纲\n- **改出来**：综合改动任务\n")
-    return "\n".join(parts)
+    plan = "\n".join(parts)
+    # 第 1 步插入可选 Mermaid 局部图，测试配图解析与逐步渲染
+    first_marker = "### 第 1 步"
+    return plan.replace(
+        first_marker,
+        first_marker + "\n```mermaid\nflowchart TD\n  A[\"app.py\"] --> B[\"src/core.py\"]\n```",
+        1,
+    )
 
 
 def main() -> int:
@@ -175,6 +182,12 @@ def main() -> int:
     if not parsed_steps[0].questions or not parsed_steps[0].rubric or not parsed_steps[0].task:
         print("[❌] 带读剧本解析缺少 自检问句/判定要点/动手任务")
         failed += 1
+    if "flowchart TD" not in parsed_steps[0].diagram or "```mermaid" in parsed_steps[0].raw:
+        print("[❌] 第 1 步配图应解析进 diagram 并从 raw 中剥离")
+        failed += 1
+    if parsed_steps[1].diagram:
+        print("[❌] 未配图步骤的 diagram 应为空")
+        failed += 1
 
     # WebTutor 离线状态机：RoadMap 总览 → 途中自由提问 → 自检通过 → 动手可跳过 → 下一步
     class _FakeLLM:
@@ -198,6 +211,9 @@ def main() -> int:
     wt.start()
     if wt.phase != "read" or wt.idx != 0:
         print("[❌] WebTutor 启动后应停在第 1 步阅读")
+        failed += 1
+    if "flowchart TD" not in wt.current_diagram():
+        print("[❌] 第 1 步配图未进入 WebTutor 当前步骤")
         failed += 1
     # 阅读阶段自由提问：答疑但不推进
     replies = wt.respond("这个项目是怎么跑起来的？")
@@ -228,6 +244,9 @@ def main() -> int:
     replies = wt.respond("跳过")
     if wt.idx != 1 or wt.phase != "read" or not any("第 2/5 步" in m for m in replies):
         print("[❌] 跳过动手后应进入第 2 步")
+        failed += 1
+    if wt.current_diagram():
+        print("[❌] 无配图步骤 current_diagram 应为空")
         failed += 1
     # 提问识别规则
     if not _is_question("为什么这里要这么写？") or not _is_question("问：入口文件是哪个") or _is_question("因为它更简单"):

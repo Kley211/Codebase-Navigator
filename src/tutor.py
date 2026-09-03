@@ -59,6 +59,7 @@ _QUESTION_RE = re.compile(r"(?m)^\s*[-*]\s*问题\s*\d*\s*[：:]\s*(.+)$")
 _RUBRIC_RE = re.compile(r"(?m)^\s*\d+\s*[.、)]\s*(.+)$")
 _CITE_RE = re.compile(r"[\w./\\\-]+\.\w+:\d+(?:-\d+)?")
 _FINAL_HEAD_RE = re.compile(r"(?m)^#{1,3}\s*(剧末验收|毕业|.*验收关卡).*$")
+_MMD_RE = re.compile(r"```mermaid\s*\n(.*?)```", re.S)
 
 JUDGE_SYS = """你是「Codebase Navigator」的苏格拉底式带读导师。你的职责是判断学习者的回答是否覆盖了当前自检要点的核心内容，并用追问引导他自己想出来。
 
@@ -100,6 +101,7 @@ class LearnStep:
     rubric: list[str] = field(default_factory=list)
     unlock: str = ""
     raw: str = ""
+    diagram: str = ""   # 该步可选的 Mermaid 局部图（配合「读这里」建立画面）
 
 
 def split_sections(step_text: str) -> dict[str, str]:
@@ -148,8 +150,11 @@ def parse_plan(text: str) -> tuple[list[LearnStep], str]:
         text = text[:final_match.start()]
     for raw in split_steps(text):
         secs = split_sections(raw)
+        mm = _MMD_RE.search(raw)
+        diagram = mm.group(1).strip() if mm else ""
+        raw_clean = _MMD_RE.sub("", raw).strip() if mm else raw.strip()
         step = LearnStep(
-            title=_first_heading(raw),
+            title=_first_heading(raw_clean or raw),
             objective=secs.get("目标", ""),
             read_lines=_bullet_lines(secs.get("读这里", "")),
             hints=_bullet_lines(secs.get("讲解要点", "")),
@@ -160,7 +165,8 @@ def parse_plan(text: str) -> tuple[list[LearnStep], str]:
             ],
             rubric=_numbered_points(secs.get("合格回答应包含", "")),
             unlock=secs.get("解锁条件", "").strip(),
-            raw=raw.strip(),
+            raw=raw_clean,
+            diagram=diagram,
         )
         steps.append(step)
     return steps, tail
@@ -586,6 +592,12 @@ class WebTutor:
             "> 学习途中随时可输入 `问：你的问题`（或句尾带 `？`）直接提问，不打断进度。",
         ]
         return "\n".join(lines)
+
+    def current_diagram(self) -> str:
+        """当前步骤的可选配图（Mermaid 代码），无图则返回空串。"""
+        if 0 <= self.idx < len(self.steps):
+            return self.steps[self.idx].diagram
+        return ""
 
     # ---------- 会话入口 ----------
     def start(self) -> list[str]:

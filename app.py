@@ -125,11 +125,32 @@ def _default_plan_path() -> Path:
     return Path.cwd() / f"learn-{Path(repo_path).name}.md"
 
 
-def _tutor_start(regen: bool) -> tuple[list, str, str]:
+_TUTOR_DIAGRAM_IDLE = (
+    '<div class="cn-diagram-note">当前步骤若有配图，会显示在这里（辅助建立画面，可选参考）。</div>'
+)
+
+
+def _tutor_diagram_out() -> str:
+    """当前带读步骤的局部配图（无图/未开始时显示占位）。"""
+    tutor = state["tutor"]
+    if not tutor or getattr(tutor, "idx", -1) < 0:
+        return _TUTOR_DIAGRAM_IDLE
+    code = tutor.current_diagram()
+    if not code:
+        return _TUTOR_DIAGRAM_IDLE
+    step = tutor.steps[tutor.idx]
+    caption = (
+        f"第 {tutor.idx + 1}/{len(tutor.steps)} 步配图 · {step.title or ''}"
+        "（读图时对照上方「读这里」的行号）"
+    )
+    return mermaid_html(code, caption=caption)
+
+
+def _tutor_start(regen: bool) -> tuple[list, str, str, str]:
     """启动带读陪练：复用/生成剧本 → 输出 RoadMap 总览 + 开场引导。"""
     agent = state["agent"]
     if not agent or not state["repo_path"]:
-        return [], "请先加载仓库（带读陪练是 AI 功能，需要 API Key）。", ""
+        return [], "请先加载仓库（带读陪练是 AI 功能，需要 API Key）。", "", _TUTOR_DIAGRAM_IDLE
     try:
         plan_text = state["tutor_plan"]
         plan_path = _default_plan_path()
@@ -144,7 +165,7 @@ def _tutor_start(regen: bool) -> tuple[list, str, str]:
         state["tutor"] = tutor
         roadmap = tutor.roadmap_md()
         history = [{"role": "assistant", "content": m} for m in tutor.start()]
-        return history, tutor.summary(), roadmap
+        return history, tutor.summary(), roadmap, _tutor_diagram_out()
     except Exception as e:
         state["tutor"] = None
         plan_name = Path(state["repo_path"]).name if state["repo_path"] else "仓库名"
@@ -153,26 +174,26 @@ def _tutor_start(regen: bool) -> tuple[list, str, str]:
             f"可稍后重试；若多次失败，先用 CLI 生成剧本：`python cli.py <仓库> --learn`，"
             f"再把生成的 `learn-{plan_name}.md` 放到项目目录，最后点「开始带读」。"
         )
-        return [{"role": "assistant", "content": note}], "启动失败", ""
+        return [{"role": "assistant", "content": note}], "启动失败", "", _TUTOR_DIAGRAM_IDLE
 
 
-def tutor_start() -> tuple[list, str, str]:
+def tutor_start() -> tuple[list, str, str, str]:
     """「开始带读」：优先复用已有剧本，秒开新会话。"""
     return _tutor_start(regen=False)
 
 
-def tutor_regen() -> tuple[list, str, str]:
+def tutor_regen() -> tuple[list, str, str, str]:
     """「重新生成剧本」：忽略旧剧本，让 AI 重新生成一份。"""
     return _tutor_start(regen=True)
 
 
-def tutor_reset(roadmap: str = "") -> tuple[list, str, str]:
+def tutor_reset(roadmap: str = "") -> tuple[list, str, str, str]:
     """「结束会话」：结束当前会话，保留 RoadMap 与剧本供下次秒开。"""
     state["tutor"] = None
-    return [], "会话已结束。点「开始带读」再来一轮（沿用已生成的剧本）。", roadmap
+    return [], "会话已结束。点「开始带读」再来一轮（沿用已生成的剧本）。", roadmap, _TUTOR_DIAGRAM_IDLE
 
 
-def tutor_send(message: str, history: list) -> tuple[list, str, str]:
+def tutor_send(message: str, history: list) -> tuple[list, str, str, str]:
     """带读会话逐轮应答：学习者回复 → 苏格拉底判定/追问 → 追加消息。"""
     message = (message or "").strip()
     tutor = state["tutor"]
@@ -184,13 +205,13 @@ def tutor_send(message: str, history: list) -> tuple[list, str, str]:
                 {"role": "user", "content": message},
                 {"role": "assistant", "content": note},
             ]
-        return history, "未开始", ""
+        return history, "未开始", "", _TUTOR_DIAGRAM_IDLE
     msgs = tutor.respond(message)
     history = history or []
     if message:
         history = history + [{"role": "user", "content": message}]
     history = history + [{"role": "assistant", "content": m} for m in msgs]
-    return history, tutor.summary(), ""
+    return history, tutor.summary(), "", _tutor_diagram_out()
 
 
 def static_report() -> str:
@@ -392,6 +413,7 @@ def build_app() -> gr.Blocks:
                     "（还没有路线图。点「开始带读」会先生成 RoadMap，再逐步带读。）",
                     elem_id="tutor-roadmap",
                 )
+                tutor_diagram = gr.HTML(_TUTOR_DIAGRAM_IDLE, elem_id="tutor-diagram-out")
                 tutor_summary = gr.Markdown(
                     "尚未开始。加载仓库后点「开始带读」。", elem_id="tutor-summary"
                 )
@@ -421,14 +443,26 @@ def build_app() -> gr.Blocks:
         progress_load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_reset_btn.click(progress_reset, None, [progress_group, progress_label])
         progress_group.change(progress_toggle, progress_group, progress_label)
-        tutor_start_btn.click(tutor_start, None, [tutor_chat, tutor_summary, tutor_roadmap])
-        tutor_regen_btn.click(tutor_regen, None, [tutor_chat, tutor_summary, tutor_roadmap])
-        tutor_stop_btn.click(tutor_reset, [tutor_roadmap], [tutor_chat, tutor_summary, tutor_roadmap])
+        tutor_start_btn.click(
+            tutor_start, None, [tutor_chat, tutor_summary, tutor_roadmap, tutor_diagram]
+        )
+        tutor_regen_btn.click(
+            tutor_regen, None, [tutor_chat, tutor_summary, tutor_roadmap, tutor_diagram]
+        )
+        tutor_stop_btn.click(
+            tutor_reset,
+            [tutor_roadmap],
+            [tutor_chat, tutor_summary, tutor_roadmap, tutor_diagram],
+        )
         tutor_send_btn.click(
-            tutor_send, [tutor_input, tutor_chat], [tutor_chat, tutor_summary, tutor_input]
+            tutor_send,
+            [tutor_input, tutor_chat],
+            [tutor_chat, tutor_summary, tutor_input, tutor_diagram],
         )
         tutor_input.submit(
-            tutor_send, [tutor_input, tutor_chat], [tutor_chat, tutor_summary, tutor_input]
+            tutor_send,
+            [tutor_input, tutor_chat],
+            [tutor_chat, tutor_summary, tutor_input, tutor_diagram],
         )
 
     return app
