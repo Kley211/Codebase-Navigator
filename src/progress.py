@@ -60,8 +60,20 @@ class ProgressStore:
             with open(self.path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
-        except (OSError, json.JSONDecodeError):
+        except OSError:
             return {}
+        except (ValueError, json.JSONDecodeError):
+            self._backup_corrupt()
+            return {}
+
+    def _backup_corrupt(self) -> None:
+        """进度文件损坏时先备份再忽略，避免下次保存直接覆盖导致数据丢失。"""
+        try:
+            if self.path.exists():
+                bak = self.path.with_name(self.path.name + f".corrupt-{int(time.time())}")
+                os.replace(self.path, bak)
+        except OSError:
+            pass
 
     def _save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

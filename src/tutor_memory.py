@@ -29,11 +29,24 @@ def default_path() -> Path:
     return _DEFAULT_DIR / "tutor_memory.json"
 
 
+def _backup_corrupt(p: Path) -> None:
+    """损坏的记忆文件先备份再忽略，避免下次保存直接覆盖丢数据。"""
+    try:
+        if p.exists():
+            bak = p.with_name(p.name + f".corrupt-{int(time.time())}")
+            os.replace(p, bak)
+    except OSError:
+        pass
+
+
 def load(path: Path | str | None = None) -> dict:
     p = Path(path) if path else default_path()
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except OSError:
+        return {}
+    except (ValueError, TypeError):
+        _backup_corrupt(p)
         return {}
 
 
@@ -41,7 +54,9 @@ def save(data: dict, path: Path | str | None = None) -> None:
     p = Path(path) if path else default_path()
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = p.with_name(p.name + ".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, p)
     except OSError:
         pass  # 记忆写失败不影响带读主流程
 
