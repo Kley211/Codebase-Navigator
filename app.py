@@ -24,7 +24,7 @@ from src.config import PROVIDERS, resolve_config
 from src.repo import REPO_CACHE_ROOT, load_repo
 from src.report import generate_report
 from src.progress import ProgressStore
-from src.tutor import WebTutor
+from src.tutor import WebTutor, parse_plan
 from src import tutor_memory
 from src.diagram import mermaid_html, module_map_mermaid
 
@@ -213,6 +213,33 @@ def _tutor_diagram_out() -> str:
     return mermaid_html(code, caption=caption)
 
 
+def _learner_profile() -> str | None:
+    """当前仓库的带读记忆画像：用于「重新生成剧本」时让新路线自适应。
+
+    读取的是当前剧本（旧路线）的记忆：已完成主题默认跳过、薄弱点加深。
+    """
+    repo_path = state["repo_path"]
+    plan_text = state.get("tutor_plan")
+    if repo_path and not plan_text:
+        disk_plan = _default_plan_path()
+        if disk_plan.exists():
+            try:
+                plan_text = disk_plan.read_text(encoding="utf-8")
+            except OSError:
+                plan_text = None
+    if not repo_path or not plan_text:
+        return None
+    try:
+        old_titles = [s.title for s in parse_plan(plan_text)[0]]
+    except Exception:
+        return None
+    if not old_titles:
+        return None
+    return tutor_memory.profile(
+        tutor_memory.load(), Path(repo_path).name, old_titles
+    )
+
+
 def _tutor_start(regen: bool) -> tuple[list, str, str, str]:
     """启动带读陪练：复用/生成剧本 → 输出 RoadMap 总览 + 开场引导。"""
     agent = state["agent"]
@@ -226,17 +253,25 @@ def _tutor_start(regen: bool) -> tuple[list, str, str, str]:
     try:
         plan_text = state["tutor_plan"]
         plan_path = _default_plan_path()
+        learner_profile = _learner_profile() if regen else None
         if not plan_text or regen:
             if not regen and plan_path.exists():
                 plan_text = plan_path.read_text(encoding="utf-8")
             else:
-                plan_text = agent.get_learn_plan()
+                plan_text = agent.get_learn_plan(learner=learner_profile)
                 plan_path.write_text(plan_text, encoding="utf-8")
             state["tutor_plan"] = plan_text
         tutor = WebTutor(agent, plan_text, repo_key=Path(state["repo_path"]).name)
         state["tutor"] = tutor
         roadmap = tutor.roadmap_md()
         history = [{"role": "assistant", "content": m} for m in tutor.start()]
+        if learner_profile:
+            head = (
+                "🧭 **已按你的学习记忆调整新路线**：默认跳过已掌握内容，"
+                "把步骤预算留给薄弱点与未完成的部分。\n\n```text\n"
+                f"{learner_profile}\n```"
+            )
+            history = [{"role": "assistant", "content": head}] + history
         return history, tutor.summary(), roadmap, _tutor_diagram_out()
     except Exception as e:
         state["tutor"] = None
@@ -539,6 +574,7 @@ def build_app() -> gr.Blocks:
                     "**先看 RoadMap 认清全程，再按步骤带读**：每步 精读 → 苏格拉底自检 →（可选）动手 → 毕业关卡。"
                     "验收 = **能复述 + 能讲**（能改是加分项，动手可 `跳过`）。"
                     "第一次点「开始带读」会用 AI 生成剧本（约 1-2 分钟），之后秒开。"
+"「重新生成剧本」会先读你的带读记忆：已掌握主题默认不再重教，路线会加深薄弱点、补齐未完成内容。"
                     "途中看不懂可输入 `问：你的问题`，想看局部图可输入 `画图：请求流程` 这类主题。"
                     "\n\n📌 **自动记进度**：每步带读结果（自检通过 / ⚠ 薄弱点）会写入本地"
                     " `~/.codebase-navigator/tutor_memory.json`；下次点「开始带读」会从上次停下的步骤续读，"

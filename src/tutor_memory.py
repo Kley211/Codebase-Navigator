@@ -1,4 +1,7 @@
-"""带读记忆（Learning Agent 最小闭环）：步骤级断点续读 + 薄弱点标记。
+"""带读记忆（Learning Agent 闭环）：步骤级断点续读 + 薄弱点标记 + 学习者画像。
+
+画像：把历史掌握度浓缩成一段文本，供「重新生成剧本」时注入提示词，
+让新路线跳过已掌握内容、加深薄弱点（记忆驱动的自适应路线）。
 
 数据文件默认位于 ~/.codebase-navigator/tutor_memory.json（与 progress.json 同目录）。
 结构：{
@@ -110,3 +113,33 @@ def next_index(entry: dict) -> int:
         if not s.get("passed"):
             return i
     return len(steps)
+
+
+def profile(data: dict, repo_key: str, titles: list[str]) -> str | None:
+    """把某仓库的带读记忆浓缩成「学习者画像」文本。
+
+    用于重新生成剧本时让 LLM 调路线：默认跳过已掌握主题（最多快速回顾），
+    把步骤预算留给薄弱点与尚未完成的内容。没有有效进度时返回 None。
+    """
+    entry = entry_for(data, repo_key, list(titles))
+    if not entry:
+        return None
+    steps = entry.get("steps", [])
+    passed_idx = [i for i, s in enumerate(steps) if s.get("passed")]
+    weak_idx = [i for i, s in enumerate(steps) if s.get("weak")]
+    if not passed_idx and not weak_idx:
+        return None
+    lines = [f"- 已完成 {len(passed_idx)}/{len(steps)} 步。"]
+    if weak_idx:
+        weak_names = "、".join(
+            titles[i] for i in weak_idx if 0 <= i < len(titles)
+        )
+        lines.append(f"- 薄弱点（需加深）：{weak_names}。")
+    remaining = [
+        titles[i] for i in range(len(steps))
+        if i not in passed_idx and 0 <= i < len(titles)
+    ]
+    if remaining:
+        shown = "、".join(remaining[:5]) + ("…" if len(remaining) > 5 else "")
+        lines.append(f"- 尚未完成：{shown}。")
+    return "\n".join(lines)

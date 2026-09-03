@@ -360,6 +360,34 @@ def main() -> int:
         print("[❌] 全部步骤通过后 next_index 应等于步骤总数")
         failed += 1
 
+    # D. 学习者画像（记忆驱动自适应路线的输入）：有进度才出画像，含完成数/薄弱/未完成
+    data_d = {}
+    entry_d = tutor_memory.ensure_entry(data_d, "demo", plan_titles)
+    if tutor_memory.profile(data_d, "demo", plan_titles) is not None:
+        print("[❌] 无任何进度时不应产出学习者画像")
+        failed += 1
+    tutor_memory.mark(entry_d, 0, passed=True, weak=False)
+    tutor_memory.mark(entry_d, 1, passed=True, weak=True)
+    prof_d = tutor_memory.profile(data_d, "demo", plan_titles)
+    if not prof_d or "已完成 2" not in prof_d:
+        print("[❌] 画像应包含已完成步数")
+        failed += 1
+    if plan_titles[1] not in prof_d or "尚未完成" not in prof_d:
+        print("[❌] 画像应点名薄弱点并列出未完成步骤")
+        failed += 1
+    # 全部完成 → 画像仍有效（供「重新生成」进阶路线使用）
+    for i in range(len(plan_titles)):
+        tutor_memory.mark(entry_d, i, passed=True, weak=False)
+    prof_done = tutor_memory.profile(data_d, "demo", plan_titles)
+    if not prof_done or "已完成 " + str(len(plan_titles)) not in prof_done:
+        print("[❌] 全部完成后画像应标注已完成总数")
+        failed += 1
+    # 剧本标题对不上（重新生成过）→ 画像应失效，防止旧进度错位
+    prof_mismatch = tutor_memory.profile(data_d, "demo", ["别的剧本标题"])
+    if prof_mismatch is not None:
+        print("[❌] 剧本标题不一致时画像应返回 None")
+        failed += 1
+
     # Ask 规划拆分：先拆解计划再执行；计划进 metadata、不进最终回答正文
     from types import SimpleNamespace
     from src.agent import (
@@ -485,11 +513,12 @@ def main() -> int:
         print("[✅] 带读剧本解析")
         print("[✅] RoadMap / 自由提问 / 动手可选")
         print("[✅] 带读记忆闭环（断点续读 / 薄弱点）")
+        print("[✅] 学习者画像（记忆驱动路线）")
         print("[✅] Ask 规划拆分（先计划后执行）")
         print("[✅] 架构图渲染抽象")
     else:
         print("[❌] 静态报告")
-    print(f"\n结果：{len(checks) + 7 - failed}/{len(checks) + 7} 通过")
+    print(f"\n结果：{len(checks) + 8 - failed}/{len(checks) + 8} 通过")
     return 0 if failed == 0 else 1
 
 

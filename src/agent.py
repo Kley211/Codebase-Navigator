@@ -433,11 +433,14 @@ class CodebaseNavigator:
             )
         return self._run(user_message, final_check=_ask_final_check, tool_budget=ASK_TOOL_BUDGET)
 
-    def get_learn_plan(self) -> str:
+    def get_learn_plan(self, learner: str | None = None) -> str:
         """生成「带读剧本」：把仓库转成 5-8 步、可自检的学习计划。
 
         与概览一致采用「静态上下文 + 一次 LLM 调用」，避免大仓库下
         多轮工具调用失控；结构不合格时自动让模型重写（最多重试 2 次）。
+
+        learner: 可选「学习者画像」（带读记忆的历史掌握度）。传入后新剧本会
+        跳过已掌握主题（最多快速回顾），把步骤预算留给薄弱点与未完成内容。
         """
         from .learn import validate_learn_plan, retry_hint
 
@@ -445,6 +448,15 @@ class CodebaseNavigator:
         prompt = LEARN_PLAN_PROMPT.format(
             repo_name=Path(self.repo_path).name, context=context
         )
+        if learner and learner.strip():
+            prompt += (
+                "\n\n## 学习者画像（据此调整路线；只描述掌握度，不是仓库事实）\n"
+                f"{learner.strip()}\n\n"
+                "路线调整要求：画像中「已完成」的主题默认已会，不要整块重教，"
+                "最多用 1 步快速回顾（含第 1 步「跑起来」）；把省下的步骤预算用于"
+                "「薄弱点」的加深精读与更高阶内容；「尚未完成」的基础步骤仍需保留；"
+                "总步数与其余格式要求不变。"
+            )
         self.last_tool_calls = []
         self.conversation.append({"role": "user", "content": prompt})
         messages = [
