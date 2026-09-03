@@ -83,12 +83,12 @@ def progress_refresh() -> tuple[list[str], str]:
     """加载当前仓库的学习清单（首次自动生成默认清单）。"""
     key = _progress_repo_key()
     if not key or not state["repo_path"]:
-        return [], "请先加载仓库（GitHub URL 或本地路径）。"
+        return gr.update(choices=[], value=[]), "请先加载仓库（GitHub URL 或本地路径）。"
     progress_store.ensure(key, str(state["repo_path"]))
     items = progress_store.items(key)
     done = progress_store.done(key)
     pct = int(len(done) / len(items) * 100) if items else 0
-    return done, f"「{key}」 已完成 {len(done)}/{len(items)} · {pct}%"
+    return gr.update(choices=items, value=done), f"「{key}」 已完成 {len(done)}/{len(items)} · {pct}%"
 
 
 def progress_toggle(done: list[str]) -> str:
@@ -107,9 +107,10 @@ def progress_reset() -> tuple[list[str], str]:
     """重置当前仓库的学习进度。"""
     key = _progress_repo_key()
     if not key:
-        return [], "请先加载仓库。"
+        return gr.update(choices=[], value=[]), "请先加载仓库。"
+    items = progress_store.items(key)
     progress_store.reset(key)
-    return [], f"已重置「{key}」的学习进度，重新开始！"
+    return gr.update(choices=items, value=[]), f"已重置「{key}」的学习进度，重新开始！"
 
 
 def static_report() -> str:
@@ -242,7 +243,7 @@ def build_app() -> gr.Blocks:
         load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_load_btn.click(progress_refresh, None, [progress_group, progress_label])
         progress_reset_btn.click(progress_reset, None, [progress_group, progress_label])
-        progress_group.select(progress_toggle, progress_group, progress_label)
+        progress_group.change(progress_toggle, progress_group, progress_label)
 
     return app
 
