@@ -141,6 +141,21 @@ python evals/run_ai_evals.py --filter flask,requests --save evals/.cache/ai_repo
 
 指标：幻觉率（引用指向不存在的文件，验收 0%）、引用精确率（歧义引用只警告不计幻觉）、章节覆盖。报告原文保存后可人工抽查。
 
+### Agent 行为评测（Ask 问答路径）
+
+```bash
+# 跑 flask/requests/gin × 3 问共 9 个行为任务（远程仓库自动浅克隆到 evals/.cache）
+python evals/run_agent_evals.py
+
+# 只跑某几问 / 用本项目（tasks_local.yaml）本地 dogfood，免克隆
+python evals/run_agent_evals.py --tasks evals/tasks_xxx.yaml
+```
+
+指标：任务成功率（回答引用到金标文件且无幻觉引用）、金标文件真实触达率（read/import 过）、幻觉任务数、平均工具调用数与耗时。
+GLM-5.2 免费档全量 9 任务实测 **8/9 通过、0 幻觉任务**；唯一失败题（gin Q3 单问 20 次工具预算耗尽）为偶发抖动，单独重跑通过（16 次工具、0 幻觉）。
+结果存 `evals/.cache/agent_eval_results.json`。
+
+
 ## 项目结构
 
 ```
